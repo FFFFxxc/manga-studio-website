@@ -1,4 +1,6 @@
 import type { PerspectiveQuad, NormalizedPoint } from '@/types';
+import { drawPerspectiveCanvas, type PerspectiveCanvasOptions } from '@/utils/perspectiveCanvas';
+import { renderPerspectiveWebgl } from '@/utils/perspectiveWebgl';
 
 export type Homography = [number, number, number, number, number, number, number, number, number];
 export type PerspectiveQuality = 'drag' | 'preview' | 'export';
@@ -211,29 +213,31 @@ export function mapDocumentPointToLayerPoint(
   return projectHomography(inverse, { x: point.x * width, y: point.y * height });
 }
 
-function drawTriangle(
+export type PerspectiveDrawOptions = PerspectiveCanvasOptions;
+
+function clipPerspectiveCrop(
   ctx: CanvasRenderingContext2D,
-  source: CanvasImageSource,
-  src: [NormalizedPoint, NormalizedPoint, NormalizedPoint],
-  dst: [NormalizedPoint, NormalizedPoint, NormalizedPoint],
+  quad: PerspectiveQuad,
+  width: number,
+  height: number,
+  crop: NonNullable<PerspectiveDrawOptions['crop']>,
 ) {
-  const [s0, s1, s2] = src;
-  const [d0, d1, d2] = dst;
-  const denominator = s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y);
-  if (Math.abs(denominator) < 1e-8) return;
-  const a = (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / denominator;
-  const c = (d0.x * (s2.x - s1.x) + d1.x * (s0.x - s2.x) + d2.x * (s1.x - s0.x)) / denominator;
-  const e = (d0.x * (s1.x * s2.y - s2.x * s1.y) + d1.x * (s2.x * s0.y - s0.x * s2.y) + d2.x * (s0.x * s1.y - s1.x * s0.y)) / denominator;
-  const b = (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / denominator;
-  const d = (d0.y * (s2.x - s1.x) + d1.y * (s0.x - s2.x) + d2.y * (s1.x - s0.x)) / denominator;
-  const f = (d0.y * (s1.x * s2.y - s2.x * s1.y) + d1.y * (s2.x * s0.y - s0.x * s2.y) + d2.y * (s0.x * s1.y - s1.x * s0.y)) / denominator;
-  ctx.save();
+  const homography = perspectiveHomography(quad, width, height);
+  if (!homography) return false;
+  const points = [
+    { x: crop.x, y: crop.y },
+    { x: crop.x + crop.width, y: crop.y },
+    { x: crop.x + crop.width, y: crop.y + crop.height },
+    { x: crop.x, y: crop.y + crop.height },
+  ].map(point => projectHomography(homography, point));
   ctx.beginPath();
-  ctx.moveTo(d0.x, d0.y); ctx.lineTo(d1.x, d1.y); ctx.lineTo(d2.x, d2.y); ctx.closePath();
+  ctx.moveTo(points[0].x, points[0].y);
+  ctx.lineTo(points[1].x, points[1].y);
+  ctx.lineTo(points[2].x, points[2].y);
+  ctx.lineTo(points[3].x, points[3].y);
+  ctx.closePath();
   ctx.clip();
-  ctx.setTransform(a, b, c, d, e, f);
-  ctx.drawImage(source, 0, 0);
-  ctx.restore();
+  return true;
 }
 
 export function drawPerspectiveImage(
@@ -242,40 +246,22 @@ export function drawPerspectiveImage(
   quad: PerspectiveQuad,
   width: number,
   height: number,
-  options: { crop?: { x: number; y: number; width: number; height: number } | null; sourceBounds?: { x: number; y: number; width: number; height: number } | null; opacity?: number; subdivisions?: number } = {},
+  options: PerspectiveDrawOptions = {},
 ) {
-  const homography = perspectiveHomography(quad, width, height);
-  if (!homography) return;
-  const sizedSource = source as { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number; displayWidth?: number; displayHeight?: number };
-  const sourceWidth = sizedSource.naturalWidth || sizedSource.videoWidth || sizedSource.displayWidth || sizedSource.width || 0;
-  const sourceHeight = sizedSource.naturalHeight || sizedSource.videoHeight || sizedSource.displayHeight || sizedSource.height || 0;
-  if (!sourceWidth || !sourceHeight) return;
-  const crop = options.crop ?? { x: 0, y: 0, width: 1, height: 1 };
-  const sourceBounds = options.sourceBounds ?? null;
-  const subdivisions = Math.max(2, Math.min(32, Math.round(options.subdivisions ?? 14)));
-  ctx.save();
-  ctx.globalAlpha *= options.opacity ?? 1;
-  for (let row = 0; row < subdivisions; row++) {
-    const localV0 = row / subdivisions;
-    const localV1 = (row + 1) / subdivisions;
-    const v0 = sourceBounds ? sourceBounds.y + sourceBounds.height * localV0 : crop.y + crop.height * localV0;
-    const v1 = sourceBounds ? sourceBounds.y + sourceBounds.height * localV1 : crop.y + crop.height * localV1;
-    for (let column = 0; column < subdivisions; column++) {
-      const localU0 = column / subdivisions;
-      const localU1 = (column + 1) / subdivisions;
-      const u0 = sourceBounds ? sourceBounds.x + sourceBounds.width * localU0 : crop.x + crop.width * localU0;
-      const u1 = sourceBounds ? sourceBounds.x + sourceBounds.width * localU1 : crop.x + crop.width * localU1;
-      const s00 = { x: u0 * sourceWidth, y: v0 * sourceHeight };
-      const s10 = { x: u1 * sourceWidth, y: v0 * sourceHeight };
-      const s11 = { x: u1 * sourceWidth, y: v1 * sourceHeight };
-      const s01 = { x: u0 * sourceWidth, y: v1 * sourceHeight };
-      const d00 = projectHomography(homography, sourceBounds ? { x: localU0, y: localV0 } : { x: u0, y: v0 });
-      const d10 = projectHomography(homography, sourceBounds ? { x: localU1, y: localV0 } : { x: u1, y: v0 });
-      const d11 = projectHomography(homography, sourceBounds ? { x: localU1, y: localV1 } : { x: u1, y: v1 });
-      const d01 = projectHomography(homography, sourceBounds ? { x: localU0, y: localV1 } : { x: u0, y: v1 });
-      drawTriangle(ctx, source, [s00, s10, s11], [d00, d10, d11]);
-      drawTriangle(ctx, source, [s00, s11, s01], [d00, d11, d01]);
+  const rendered = options.sourceBounds
+    ? null
+    : renderPerspectiveWebgl(source, quad, width, height);
+  if (rendered) {
+    const { bounds, canvas } = rendered;
+    ctx.save();
+    ctx.globalAlpha *= options.opacity ?? 1;
+    if (options.crop && !clipPerspectiveCrop(ctx, quad, width, height, options.crop)) {
+      ctx.restore();
+      return;
     }
+    ctx.drawImage(canvas, bounds.x, bounds.y, bounds.width, bounds.height);
+    ctx.restore();
+    return;
   }
-  ctx.restore();
+  drawPerspectiveCanvas(ctx, source, quad, width, height, options);
 }
