@@ -29,10 +29,16 @@ describe('perspective geometry quality', () => {
     const quad = { ...rectangle, topLeft: { x: 0.1, y: 0.15 }, bottomRight: { x: 0.9, y: 0.8 } };
     const matrix = perspectiveHomography(quad, 1000, 800)!;
     const topLeft = projectHomography(matrix, { x: 0, y: 0 });
+    const topRight = projectHomography(matrix, { x: 1, y: 0 });
     const bottomRight = projectHomography(matrix, { x: 1, y: 1 });
+    const bottomLeft = projectHomography(matrix, { x: 0, y: 1 });
     expect(topLeft.x).toBeCloseTo(100);
     expect(topLeft.y).toBeCloseTo(120);
+    expect(topRight.x).toBeCloseTo(1000);
+    expect(topRight.y).toBeCloseTo(0);
     expect(bottomRight.x).toBeCloseTo(900);
     expect(bottomRight.y).toBeCloseTo(640);
+    expect(bottomLeft.x).toBeCloseTo(0);
+    expect(bottomLeft.y).toBeCloseTo(800);
   });
 });
