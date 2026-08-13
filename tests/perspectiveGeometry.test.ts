@@ -1,0 +1,38 @@
+import { describe, expect, it } from 'vitest';
+import {
+  getPerspectiveSubdivisionCount,
+  isValidPerspectiveQuad,
+  perspectiveHomography,
+  projectHomography,
+} from '@/utils/perspective';
+
+const rectangle = {
+  topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 },
+  bottomRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 1 },
+};
+
+describe('perspective geometry quality', () => {
+  it('rejects a short edge even when the polygon area is large enough', () => {
+    expect(isValidPerspectiveQuad({
+      ...rectangle,
+      topRight: { x: 0.001, y: 0 },
+    }, { minArea: 0.0004, minEdge: 0.005 })).toBe(false);
+  });
+
+  it('uses more fallback segments for export and stronger distortion', () => {
+    const skewed = { ...rectangle, topRight: { x: 0.64, y: 0.18 } };
+    expect(getPerspectiveSubdivisionCount(skewed, 3000, 2000, 'export'))
+      .toBeGreaterThan(getPerspectiveSubdivisionCount(rectangle, 800, 600, 'drag'));
+  });
+
+  it('maps every source corner to the requested quad corner', () => {
+    const quad = { ...rectangle, topLeft: { x: 0.1, y: 0.15 }, bottomRight: { x: 0.9, y: 0.8 } };
+    const matrix = perspectiveHomography(quad, 1000, 800)!;
+    const topLeft = projectHomography(matrix, { x: 0, y: 0 });
+    const bottomRight = projectHomography(matrix, { x: 1, y: 1 });
+    expect(topLeft.x).toBeCloseTo(100);
+    expect(topLeft.y).toBeCloseTo(120);
+    expect(bottomRight.x).toBeCloseTo(900);
+    expect(bottomRight.y).toBeCloseTo(640);
+  });
+});

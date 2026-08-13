@@ -1,6 +1,12 @@
 import type { PerspectiveQuad, NormalizedPoint } from '@/types';
 
 export type Homography = [number, number, number, number, number, number, number, number, number];
+export type PerspectiveQuality = 'drag' | 'preview' | 'export';
+
+export interface PerspectiveValidationOptions {
+  minArea?: number;
+  minEdge?: number;
+}
 
 const QUAD_KEYS = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const;
 
@@ -87,10 +93,35 @@ export function perspectiveQuadArea(quad: PerspectiveQuad) {
   return area / 2;
 }
 
-export function isValidPerspectiveQuad(quad: PerspectiveQuad, minArea = 0.0004) {
+export function getPerspectiveSubdivisionCount(
+  quad: PerspectiveQuad,
+  width: number,
+  height: number,
+  quality: PerspectiveQuality,
+) {
+  const diagonals = [
+    Math.hypot(quad.topLeft.x - quad.bottomRight.x, quad.topLeft.y - quad.bottomRight.y),
+    Math.hypot(quad.topRight.x - quad.bottomLeft.x, quad.topRight.y - quad.bottomLeft.y),
+  ];
+  const distortion = Math.min(1, Math.abs(diagonals[0] - diagonals[1]) + Math.abs(perspectiveQuadArea(quad) - 1));
+  const side = Math.max(width, height);
+  const base = quality === 'drag' ? 8 : quality === 'preview' ? 14 : 20;
+  const resolutionBonus = quality === 'drag' ? 0 : Math.ceil(Math.max(0, side - 1200) / 600);
+  return Math.max(6, Math.min(40, base + Math.ceil(distortion * 12) + resolutionBonus));
+}
+
+export function isValidPerspectiveQuad(
+  quad: PerspectiveQuad,
+  options: number | PerspectiveValidationOptions = 0.0004,
+) {
+  const { minArea = 0.0004, minEdge = 0.005 } = typeof options === 'number' ? { minArea: options } : options;
   const points = QUAD_KEYS.map(key => quad[key]);
   if (points.some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return false;
   if (perspectiveQuadArea(quad) <= minArea) return false;
+  if (points.some((point, index) => {
+    const next = points[(index + 1) % points.length];
+    return Math.hypot(point.x - next.x, point.y - next.y) < minEdge;
+  })) return false;
   return !segmentsIntersect(points[0], points[1], points[2], points[3])
     && !segmentsIntersect(points[1], points[2], points[3], points[0]);
 }
