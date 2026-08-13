@@ -25,6 +25,7 @@ export interface PerspectiveCanvasOptions {
   quality?: PerspectiveQuality;
   seamOverlapPx?: number;
   subdivisions?: number;
+  canvasFactory?: () => HTMLCanvasElement;
 }
 
 function expandTriangle(points: [Point, Point, Point], overlap: number) {
@@ -65,9 +66,23 @@ function drawTriangle(
   ctx.lineTo(clip[2].x, clip[2].y);
   ctx.closePath();
   ctx.clip();
+  ctx.globalCompositeOperation = 'copy';
   ctx.transform(a, b, c, d, e, f);
   ctx.drawImage(source, 0, 0);
   ctx.restore();
+}
+
+function getBounds(points: Point[]) {
+  const x = Math.floor(Math.min(...points.map(point => point.x)));
+  const y = Math.floor(Math.min(...points.map(point => point.y)));
+  const right = Math.ceil(Math.max(...points.map(point => point.x)));
+  const bottom = Math.ceil(Math.max(...points.map(point => point.y)));
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+function createCanvas(options: PerspectiveCanvasOptions) {
+  if (options.canvasFactory) return options.canvasFactory();
+  return typeof document === 'undefined' ? null : document.createElement('canvas');
 }
 
 function getSourceSize(source: CanvasImageSource) {
@@ -114,16 +129,16 @@ export function drawPerspectiveCanvas(
         { x: crop.x, y: crop.y + crop.height },
       ];
   const outer = outerSource.map(point => projectHomography(homography, point));
+  const bounds = getBounds(outer);
+  if (bounds.width <= 0 || bounds.height <= 0) return;
+  const canvas = createCanvas(options);
+  if (!canvas) return;
+  canvas.width = bounds.width;
+  canvas.height = bounds.height;
+  const meshContext = canvas.getContext('2d');
+  if (!meshContext) return;
+  const localize = (point: Point) => ({ x: point.x - bounds.x, y: point.y - bounds.y });
 
-  ctx.save();
-  ctx.globalAlpha *= options.opacity ?? 1;
-  ctx.beginPath();
-  ctx.moveTo(outer[0].x, outer[0].y);
-  ctx.lineTo(outer[1].x, outer[1].y);
-  ctx.lineTo(outer[2].x, outer[2].y);
-  ctx.lineTo(outer[3].x, outer[3].y);
-  ctx.closePath();
-  ctx.clip();
   for (let row = 0; row < subdivisions; row++) {
     const localV0 = row / subdivisions;
     const localV1 = (row + 1) / subdivisions;
@@ -142,9 +157,19 @@ export function drawPerspectiveCanvas(
       const d10 = projectHomography(homography, sourceBounds ? { x: localU1, y: localV0 } : { x: u1, y: v0 });
       const d11 = projectHomography(homography, sourceBounds ? { x: localU1, y: localV1 } : { x: u1, y: v1 });
       const d01 = projectHomography(homography, sourceBounds ? { x: localU0, y: localV1 } : { x: u0, y: v1 });
-      drawTriangle(ctx, source, [s00, s10, s11], [d00, d10, d11], seamOverlapPx);
-      drawTriangle(ctx, source, [s00, s11, s01], [d00, d11, d01], seamOverlapPx);
+      drawTriangle(meshContext, source, [s00, s10, s11], [localize(d00), localize(d10), localize(d11)], seamOverlapPx);
+      drawTriangle(meshContext, source, [s00, s11, s01], [localize(d00), localize(d11), localize(d01)], seamOverlapPx);
     }
   }
+  ctx.save();
+  ctx.globalAlpha *= options.opacity ?? 1;
+  ctx.beginPath();
+  ctx.moveTo(outer[0].x, outer[0].y);
+  ctx.lineTo(outer[1].x, outer[1].y);
+  ctx.lineTo(outer[2].x, outer[2].y);
+  ctx.lineTo(outer[3].x, outer[3].y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.drawImage(canvas, bounds.x, bounds.y, bounds.width, bounds.height);
   ctx.restore();
 }

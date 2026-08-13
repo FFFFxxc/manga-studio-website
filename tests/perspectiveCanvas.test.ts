@@ -13,36 +13,115 @@ const rectangle = {
   bottomRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 1 },
 };
 
+function createRecordingContext(initialAlpha = 1) {
+  const paths: Array<Array<[number, number]>> = [];
+  const alphaWrites: number[] = [];
+  const compositeWrites: GlobalCompositeOperation[] = [];
+  let current: Array<[number, number]> = [];
+  let globalAlpha = initialAlpha;
+  let globalCompositeOperation: GlobalCompositeOperation = 'source-over';
+  const ctx = {
+    save: vi.fn(),
+    restore: vi.fn(),
+    beginPath: () => { current = []; },
+    moveTo: (x: number, y: number) => current.push([x, y]),
+    lineTo: (x: number, y: number) => current.push([x, y]),
+    closePath: vi.fn(),
+    clip: () => paths.push([...current]),
+    transform: vi.fn(),
+    drawImage: vi.fn(),
+    get globalAlpha() { return globalAlpha; },
+    set globalAlpha(value: number) { globalAlpha = value; alphaWrites.push(value); },
+    get globalCompositeOperation() { return globalCompositeOperation; },
+    set globalCompositeOperation(value: GlobalCompositeOperation) {
+      globalCompositeOperation = value;
+      compositeWrites.push(value);
+    },
+  } as unknown as CanvasRenderingContext2D;
+  return { ctx, paths, alphaWrites, compositeWrites };
+}
+
+function createRecordingCanvas(context: CanvasRenderingContext2D) {
+  return {
+    width: 0,
+    height: 0,
+    getContext: vi.fn(() => context),
+  } as unknown as HTMLCanvasElement;
+}
+
 describe('perspective Canvas renderer', () => {
   beforeEach(() => {
     vi.mocked(renderPerspectiveWebgl).mockReset();
   });
 
   it('overlaps internal triangles while retaining the exact external quad clip', () => {
-    const paths: Array<Array<[number, number]>> = [];
-    let current: Array<[number, number]> = [];
-    const ctx = {
-      save: vi.fn(),
-      restore: vi.fn(),
-      beginPath: () => { current = []; },
-      moveTo: (x: number, y: number) => current.push([x, y]),
-      lineTo: (x: number, y: number) => current.push([x, y]),
-      closePath: vi.fn(),
-      clip: () => paths.push([...current]),
-      transform: vi.fn(),
-      drawImage: vi.fn(),
-      globalAlpha: 1,
-    } as unknown as CanvasRenderingContext2D;
+    const target = createRecordingContext();
+    const mesh = createRecordingContext();
+    const canvas = createRecordingCanvas(mesh.ctx);
     const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
 
-    drawPerspectiveCanvas(ctx, source, rectangle, 200, 100, {
+    drawPerspectiveCanvas(target.ctx, source, rectangle, 200, 100, {
       quality: 'drag',
       seamOverlapPx: 0.75,
+      canvasFactory: () => canvas,
     });
 
-    expect(paths[0]).toEqual([[0, 0], [200, 0], [200, 100], [0, 100]]);
-    expect(paths.length).toBeGreaterThan(2);
-    expect(paths.slice(1).some(path => path.some(([x]) => x < 0 || x > 200))).toBe(true);
+    expect(target.paths).toEqual([[[0, 0], [200, 0], [200, 100], [0, 100]]]);
+    expect(mesh.paths.length).toBeGreaterThan(2);
+    expect(mesh.paths.slice(1).some(path => path.some(([x]) => x < 0 || x > 200))).toBe(true);
+  });
+
+  it('replaces overlapping triangle samples instead of source-over accumulating alpha', () => {
+    const target = createRecordingContext();
+    const mesh = createRecordingContext();
+    const canvas = createRecordingCanvas(mesh.ctx);
+    const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
+
+    drawPerspectiveCanvas(target.ctx, source, rectangle, 200, 100, {
+      subdivisions: 2,
+      canvasFactory: () => canvas,
+    });
+
+    expect(mesh.compositeWrites).toContain('copy');
+    expect(target.compositeWrites).toEqual([]);
+    expect(mesh.ctx.drawImage).toHaveBeenCalledTimes(8);
+    expect(target.ctx.drawImage).toHaveBeenCalledOnce();
+  });
+
+  it('applies caller opacity once when compositing the completed fallback surface', () => {
+    const target = createRecordingContext(0.8);
+    const mesh = createRecordingContext();
+    const canvas = createRecordingCanvas(mesh.ctx);
+    const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
+
+    drawPerspectiveCanvas(target.ctx, source, rectangle, 200, 100, {
+      opacity: 0.5,
+      subdivisions: 2,
+      canvasFactory: () => canvas,
+    });
+
+    expect(mesh.alphaWrites).toEqual([]);
+    expect(target.alphaWrites).toEqual([0.4]);
+    expect(target.ctx.drawImage).toHaveBeenCalledOnce();
+    expect(target.ctx.drawImage).toHaveBeenCalledWith(canvas, 0, 0, 200, 100);
+  });
+
+  it('bounds the fallback surface to the projected crop and clips it exactly at composition', () => {
+    const target = createRecordingContext();
+    const mesh = createRecordingContext();
+    const canvas = createRecordingCanvas(mesh.ctx);
+    const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
+
+    drawPerspectiveCanvas(target.ctx, source, rectangle, 200, 100, {
+      crop: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
+      subdivisions: 2,
+      canvasFactory: () => canvas,
+    });
+
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(50);
+    expect(target.paths).toEqual([[[50, 25], [150, 25], [150, 75], [50, 75]]]);
+    expect(target.ctx.drawImage).toHaveBeenCalledWith(canvas, 50, 25, 100, 50);
   });
 
   it('draws a successful WebGL render once at its bounded destination', () => {
@@ -112,28 +191,19 @@ describe('perspective Canvas renderer', () => {
       canvas: rendered,
       bounds: { x: 0, y: 0, width: 200, height: 100 },
     });
-    const paths: Array<Array<[number, number]>> = [];
-    let current: Array<[number, number]> = [];
-    const ctx = {
-      save: vi.fn(),
-      restore: vi.fn(),
-      beginPath: () => { current = []; },
-      moveTo: (x: number, y: number) => current.push([x, y]),
-      lineTo: (x: number, y: number) => current.push([x, y]),
-      closePath: vi.fn(),
-      clip: () => paths.push([...current]),
-      transform: vi.fn(),
-      drawImage: vi.fn(),
-      globalAlpha: 1,
-    } as unknown as CanvasRenderingContext2D;
+    const target = createRecordingContext();
+    const mesh = createRecordingContext();
+    const canvas = createRecordingCanvas(mesh.ctx);
 
-    drawPerspectiveImage(ctx, source, rectangle, 200, 100, {
+    drawPerspectiveImage(target.ctx, source, rectangle, 200, 100, {
       sourceBounds: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
       subdivisions: 2,
+      canvasFactory: () => canvas,
     });
 
-    expect(paths[0]).toEqual([[0, 0], [200, 0], [200, 100], [0, 100]]);
-    expect(ctx.drawImage).toHaveBeenCalledTimes(8);
-    expect(vi.mocked(ctx.drawImage).mock.calls.every(([image]) => image === source)).toBe(true);
+    expect(target.paths).toEqual([[[0, 0], [200, 0], [200, 100], [0, 100]]]);
+    expect(mesh.ctx.drawImage).toHaveBeenCalledTimes(8);
+    expect(vi.mocked(mesh.ctx.drawImage).mock.calls.every(([image]) => image === source)).toBe(true);
+    expect(target.ctx.drawImage).toHaveBeenCalledWith(canvas, 0, 0, 200, 100);
   });
 });
