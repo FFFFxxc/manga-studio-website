@@ -65,7 +65,7 @@ describe('perspective geometry quality', () => {
     const quad = { ...rectangle, topLeft: { x: 0.1, y: 0.15 }, bottomRight: { x: 0.9, y: 0.8 } };
     const matrix = perspectiveHomography(quad, 1000, 800)!;
     expect(projectHomography(matrix, { x: 0, y: 0 })).toEqual({ x: 100, y: 120 });
-    expect(projectHomography(matrix, { x: 1000, y: 800 })).toEqual({ x: 900, y: 640 });
+    expect(projectHomography(matrix, { x: 1, y: 1 })).toEqual({ x: 900, y: 640 });
   });
 });
 ```
@@ -181,12 +181,11 @@ uniform sampler2D u_source;
 uniform mat3 u_inverseHomography;
 uniform vec2 u_outputSize;
 uniform vec4 u_bounds;
-uniform vec2 u_sourceSize;
 varying vec2 v_destination;
 void main() {
   vec2 documentPoint = u_bounds.xy + v_destination * u_bounds.zw;
   vec3 sourcePoint = u_inverseHomography * vec3(documentPoint, 1.0);
-  vec2 uv = sourcePoint.xy / sourcePoint.z / u_sourceSize;
+  vec2 uv = sourcePoint.xy / sourcePoint.z;
   if (sourcePoint.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
   gl_FragColor = texture2D(u_source, vec2(uv.x, 1.0 - uv.y));
 }`;
