@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   calculatePerspectiveRenderBounds,
+  mapFramebufferUvToDocumentPoint,
   renderPerspectiveWebgl,
   resetPerspectiveWebglRenderer,
 } from '@/utils/perspectiveWebgl';
@@ -41,6 +42,7 @@ function createWebglHarness() {
     RGBA: 0x1908,
     UNSIGNED_BYTE: 0x1401,
     UNPACK_PREMULTIPLY_ALPHA_WEBGL: 0x9241,
+    UNPACK_FLIP_Y_WEBGL: 0x9240,
     TEXTURE_WRAP_S: 0x2802,
     TEXTURE_WRAP_T: 0x2803,
     TEXTURE_MIN_FILTER: 0x2801,
@@ -48,6 +50,8 @@ function createWebglHarness() {
     CLAMP_TO_EDGE: 0x812f,
     LINEAR: 0x2601,
     COLOR_BUFFER_BIT: 0x4000,
+    NO_ERROR: 0,
+    INVALID_OPERATION: 0x0502,
     createShader: vi.fn(() => ({})),
     shaderSource: vi.fn(),
     compileShader: vi.fn(),
@@ -84,6 +88,8 @@ function createWebglHarness() {
     uniform4f: vi.fn(),
     uniformMatrix3fv: vi.fn(),
     drawArrays: vi.fn(),
+    getError: vi.fn(() => 0),
+    isContextLost: vi.fn(() => false),
   };
   (canvas.getContext as ReturnType<typeof vi.fn>).mockReturnValue(gl);
 
@@ -106,6 +112,16 @@ describe('perspective WebGL renderer', () => {
       topLeft: { x: .2, y: .1 }, topRight: { x: .8, y: .2 },
       bottomRight: { x: .9, y: .7 }, bottomLeft: { x: .1, y: .8 },
     }, 1000, 500)).toEqual({ x: 100, y: 50, width: 800, height: 350 });
+  });
+
+  it('maps bottom-up framebuffer UV into top-down document coordinates', () => {
+    const bounds = { x: 10, y: 20, width: 80, height: 60 };
+    expect(mapFramebufferUvToDocumentPoint({ x: 0, y: 1 }, bounds)).toEqual({ x: 10, y: 20 });
+    expect(mapFramebufferUvToDocumentPoint({ x: 1, y: 1 }, bounds)).toEqual({ x: 90, y: 20 });
+    expect(mapFramebufferUvToDocumentPoint({ x: 1, y: 0 }, bounds)).toEqual({ x: 90, y: 80 });
+    const interior = mapFramebufferUvToDocumentPoint({ x: .25, y: .8 }, bounds);
+    expect(interior.x).toBeCloseTo(30);
+    expect(interior.y).toBeCloseTo(32);
   });
 
   it('returns null instead of throwing when WebGL is unavailable', () => {
@@ -132,6 +148,7 @@ describe('perspective WebGL renderer', () => {
     expect(harness.widthWrites).toHaveBeenCalledTimes(1);
     expect(harness.heightWrites).toHaveBeenCalledTimes(1);
     expect(harness.gl.pixelStorei).toHaveBeenCalledWith(harness.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    expect(harness.gl.pixelStorei).toHaveBeenCalledWith(harness.gl.UNPACK_FLIP_Y_WEBGL, false);
     expect(harness.gl.texParameteri).toHaveBeenCalledWith(
       harness.gl.TEXTURE_2D, harness.gl.TEXTURE_WRAP_S, harness.gl.CLAMP_TO_EDGE,
     );
@@ -183,9 +200,11 @@ describe('perspective WebGL renderer', () => {
     expect(recovered?.canvas).toBe(secondHarness.canvas);
   });
 
-  it('returns null when texture upload fails', () => {
+  it('returns null when texture upload sets a WebGL error', () => {
     const harness = createWebglHarness();
-    harness.gl.texImage2D.mockImplementation(() => { throw new Error('upload failed'); });
+    harness.gl.getError
+      .mockReturnValueOnce(harness.gl.NO_ERROR)
+      .mockReturnValueOnce(harness.gl.INVALID_OPERATION);
 
     expect(renderPerspectiveWebgl(
       {} as CanvasImageSource,
@@ -194,5 +213,72 @@ describe('perspective WebGL renderer', () => {
       100,
       { canvasFactory: () => harness.canvas },
     )).toBeNull();
+    expect(harness.gl.texImage2D).toHaveBeenCalledOnce();
+    expect(harness.gl.drawArrays).not.toHaveBeenCalled();
+  });
+
+  it('returns null when drawing sets a WebGL error', () => {
+    const harness = createWebglHarness();
+    harness.gl.getError
+      .mockReturnValueOnce(harness.gl.NO_ERROR)
+      .mockReturnValueOnce(harness.gl.NO_ERROR)
+      .mockReturnValueOnce(harness.gl.INVALID_OPERATION);
+
+    expect(renderPerspectiveWebgl(
+      {} as CanvasImageSource,
+      rectangle,
+      100,
+      100,
+      { canvasFactory: () => harness.canvas },
+    )).toBeNull();
+    expect(harness.gl.drawArrays).toHaveBeenCalledOnce();
+  });
+
+  it('returns null when the WebGL context becomes lost during upload', () => {
+    const harness = createWebglHarness();
+    harness.gl.isContextLost
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+
+    expect(renderPerspectiveWebgl(
+      {} as CanvasImageSource,
+      rectangle,
+      100,
+      100,
+      { canvasFactory: () => harness.canvas },
+    )).toBeNull();
+    expect(harness.gl.drawArrays).not.toHaveBeenCalled();
+  });
+
+  it('releases both shaders when fragment compilation fails', () => {
+    const harness = createWebglHarness();
+    harness.gl.getShaderParameter
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    expect(renderPerspectiveWebgl(
+      {} as CanvasImageSource,
+      rectangle,
+      100,
+      100,
+      { canvasFactory: () => harness.canvas },
+    )).toBeNull();
+    expect(harness.gl.deleteShader).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases partially allocated resources when initialization throws', () => {
+    const harness = createWebglHarness();
+    harness.gl.bufferData.mockImplementation(() => { throw new Error('buffer allocation failed'); });
+
+    expect(renderPerspectiveWebgl(
+      {} as CanvasImageSource,
+      rectangle,
+      100,
+      100,
+      { canvasFactory: () => harness.canvas },
+    )).toBeNull();
+    expect(harness.gl.deleteBuffer).toHaveBeenCalledOnce();
+    expect(harness.gl.deleteTexture).toHaveBeenCalledOnce();
+    expect(harness.gl.deleteProgram).toHaveBeenCalledOnce();
   });
 });
