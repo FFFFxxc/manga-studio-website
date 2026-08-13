@@ -183,7 +183,7 @@ export function projectHomography(matrix: Homography, point: NormalizedPoint): N
   };
 }
 
-function invertHomography(m: Homography): Homography | null {
+export function invertHomography(m: Homography): Homography | null {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h;
   const B = c * h - b * i;
