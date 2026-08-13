@@ -64,8 +64,8 @@ describe('perspective geometry quality', () => {
   it('maps every source corner to the requested quad corner', () => {
     const quad = { ...rectangle, topLeft: { x: 0.1, y: 0.15 }, bottomRight: { x: 0.9, y: 0.8 } };
     const matrix = perspectiveHomography(quad, 1000, 800)!;
-    expect(projectHomography(matrix, { x: 0, y: 0 })).toEqual(quad.topLeft);
-    expect(projectHomography(matrix, { x: 1000, y: 800 })).toEqual(quad.bottomRight);
+    expect(projectHomography(matrix, { x: 0, y: 0 })).toEqual({ x: 100, y: 120 });
+    expect(projectHomography(matrix, { x: 1000, y: 800 })).toEqual({ x: 900, y: 640 });
   });
 });
 ```
