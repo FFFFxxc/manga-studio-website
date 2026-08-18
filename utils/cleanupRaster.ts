@@ -248,7 +248,12 @@ export function drawPlacedLayer(
 ) {
   const { x = 0, y = 0, scaleX = 1, scaleY = 1, rotation = 0, crop, opacity = 1, perspective } = placement;
   if (perspective && isValidPerspectiveQuad(perspective)) {
-    drawPerspectiveImage(ctx, source, perspective, width, height, { crop, sourceBounds: placement.perspectiveSourceBounds, opacity, subdivisions: 24 });
+    drawPerspectiveImage(ctx, source, perspective, width, height, {
+      crop,
+      sourceBounds: placement.perspectiveSourceBounds,
+      opacity,
+      quality: 'export',
+    });
     return;
   }
   ctx.save();

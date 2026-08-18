@@ -207,9 +207,12 @@ function PerspectiveHandles({ quad, width, height, onBeforeChange, onChange }: {
  * Wraps a raster image with its non-destructive transform + crop and, when
  * selected with the select tool and unlocked, makes it draggable/transformable.
  */
-function PlacedRasterImage({ nodeName, image, width, height, opacity, placement, adjustments, interactive, isSelected, onSelect, onContextMenu, onBeforeChange, onChange }: {
+function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, width, height, opacity, placement, adjustments, interactive, isSelected, onSelect, onContextMenu, onBeforeChange, onChange }: {
   nodeName: string;
   image: CanvasImageSource;
+  /** Stable source URL/id and the content revision used for perspective preview caching. */
+  sourceIdentity: string;
+  sourceRevision: string;
   width: number;
   height: number;
   opacity: number;
@@ -240,25 +243,40 @@ function PlacedRasterImage({ nodeName, image, width, height, opacity, placement,
   const perspective = placement.perspective && isValidPerspectiveQuad(placement.perspective) ? placement.perspective : null;
   const naturalW = (image as HTMLImageElement).naturalWidth || (image as HTMLCanvasElement).width || width;
   const naturalH = (image as HTMLImageElement).naturalHeight || (image as HTMLCanvasElement).height || height;
+  const previewWidth = Math.max(1, Math.round(width));
+  const previewHeight = Math.max(1, Math.round(height));
+  const perspectiveQuality = perspectivePreviewActive ? 'drag' : 'preview';
+  // This key contains only pixels/geometry that affect the rendered preview.
+  // In particular it deliberately excludes unrelated editor/UI state.
+  const perspectivePreviewCacheKey = [
+    sourceIdentity, sourceRevision, naturalW, naturalH,
+    previewWidth, previewHeight, opacity,
+    crop?.x, crop?.y, crop?.width, crop?.height,
+    placement.perspectiveSourceBounds?.x, placement.perspectiveSourceBounds?.y,
+    placement.perspectiveSourceBounds?.width, placement.perspectiveSourceBounds?.height,
+    perspective?.topLeft.x, perspective?.topLeft.y,
+    perspective?.topRight.x, perspective?.topRight.y,
+    perspective?.bottomRight.x, perspective?.bottomRight.y,
+    perspective?.bottomLeft.x, perspective?.bottomLeft.y,
+    perspectiveQuality,
+  ].join('|');
   const filterValues = toKonvaAdjustmentValues(adjustments);
 
   useEffect(() => {
     if (!perspective) { setPerspectiveCanvas(null); return; }
     const next = document.createElement('canvas');
-    next.width = Math.max(1, Math.round(width));
-    next.height = Math.max(1, Math.round(height));
+    next.width = previewWidth;
+    next.height = previewHeight;
     const ctx = next.getContext('2d');
     if (!ctx) return;
     drawPerspectiveImage(ctx, image, perspective, next.width, next.height, {
       crop,
       sourceBounds: placement.perspectiveSourceBounds,
       opacity,
-      // Keep corner dragging responsive; once committed, regenerate the
-      // layer with the same higher-quality tessellation used by export.
-      subdivisions: perspectivePreviewActive ? 12 : 24,
+      quality: perspectivePreviewActive ? 'drag' : 'preview',
     });
     setPerspectiveCanvas(next);
-  }, [image, width, height, opacity, crop, perspective, placement.perspectiveSourceBounds, perspectivePreviewActive]);
+  }, [perspectivePreviewCacheKey]);
 
   useEffect(() => {
     const node = imageRef.current;
@@ -388,6 +406,8 @@ function RasterLayerNode({ layer, width, height, interactive, isSelected, onSele
     <PlacedRasterImage
       nodeName={`ai-raster-layer ${layer.id}`}
       image={image}
+      sourceIdentity={layer.src}
+      sourceRevision={JSON.stringify(layer.eraseElements ?? [])}
       width={width}
       height={height}
       opacity={layer.opacity}
@@ -440,6 +460,8 @@ function BaseLayerNode({ doc, width, height, interactive, isSelected, onSelect, 
     <PlacedRasterImage
       nodeName="base-image"
       image={image}
+      sourceIdentity={doc.cleanup.committed ?? doc.originalSrc}
+      sourceRevision={JSON.stringify(eraseElements ?? [])}
       width={width}
       height={height}
       opacity={state?.opacity ?? 1}
