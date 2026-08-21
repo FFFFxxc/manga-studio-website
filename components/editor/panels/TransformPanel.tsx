@@ -5,6 +5,7 @@ import { useStore } from '@/store/useStore';
 import { resizeDocument, cropDocument } from '@/utils/imageUtils';
 import { PanelLabel, PanelSection, PanelButton } from './PanelComponents';
 import { affineToPerspective } from '@/utils/perspective';
+import { canTransformRasterLayer } from '@/utils/layerGuards';
 
 export function TransformPanel() {
   const {
@@ -113,10 +114,11 @@ export function TransformPanel() {
       ? activeDoc.aiLayers.find(layer => layer.id === selectedLayer.id) ?? null
       : null;
   const perspectiveEnabled = Boolean(selectedRaster?.perspective);
+  const canTransformPerspective = canTransformRasterLayer(activeDoc, selectedLayer);
 
   function enablePerspective() {
     if (!selectedLayer || !selectedRaster) return;
-    if (selectedRaster.locked) {
+    if (!canTransformPerspective) {
       setError('Слой заблокирован — сначала снимите замок.');
       return;
     }
@@ -132,7 +134,7 @@ export function TransformPanel() {
 
   function resetPerspective() {
     if (!selectedLayer || !selectedRaster) return;
-    if (selectedRaster.locked) {
+    if (!canTransformPerspective) {
       setError('Слой заблокирован — сначала снимите замок.');
       return;
     }
@@ -172,16 +174,21 @@ export function TransformPanel() {
                 ? 'Оригинал'
                 : activeDoc.aiLayers.find(layer => layer.id === selectedLayer?.id)?.name ?? 'Растровый слой'}. В режиме перспективы потяните любой из четырёх углов на холсте.
             </div>
+            {!canTransformPerspective && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Слой заблокирован — сначала снимите замок.
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 6 }}>
-              <PanelButton variant={perspectiveEnabled ? 'secondary' : 'primary'} fullWidth onClick={resetPerspective} disabled={!perspectiveEnabled || selectedRaster.locked}>
+              <PanelButton variant={perspectiveEnabled ? 'secondary' : 'primary'} fullWidth onClick={resetPerspective} disabled={!perspectiveEnabled || !canTransformPerspective}>
                 Обычная
               </PanelButton>
-              <PanelButton variant={perspectiveEnabled ? 'primary' : 'secondary'} fullWidth onClick={enablePerspective} disabled={perspectiveEnabled || selectedRaster.locked}>
+              <PanelButton variant={perspectiveEnabled ? 'primary' : 'secondary'} fullWidth onClick={enablePerspective} disabled={perspectiveEnabled || !canTransformPerspective}>
                 Перспектива
               </PanelButton>
             </div>
             {perspectiveEnabled && (
-              <PanelButton variant="secondary" fullWidth onClick={resetPerspective} disabled={selectedRaster.locked}>
+              <PanelButton variant="secondary" fullWidth onClick={resetPerspective} disabled={!canTransformPerspective}>
                 Сбросить перспективу
               </PanelButton>
             )}

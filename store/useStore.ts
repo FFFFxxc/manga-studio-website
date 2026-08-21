@@ -41,6 +41,7 @@ import { storeDefaultTranslationFont } from '@/utils/fonts';
 import { filterLockedGeometryUpdates } from '@/utils/lockedUpdates';
 import { addRecentColor, loadStoredRecentColors, storeRecentColors } from '@/utils/recentColors';
 import { documentObjectUrlReferencesChanged, revokeUnusedDocumentObjectUrls } from '@/utils/objectUrls';
+import { canTransformRasterLayer } from '@/utils/layerGuards';
 
 const MAX_HISTORY = 40;
 
@@ -704,6 +705,9 @@ export const useStore = create<AppState>((set, get) => ({
   }),
 
   updateAiLayerPerspective: (id, quad, options) => {
+    const state = get();
+    const document = state.documents[state.activeDocIndex];
+    if (!document || !canTransformRasterLayer(document, { id, type: 'ai' })) return;
     get().updateAiLayer(id, { perspective: clonePerspectiveQuad(quad) }, options);
   },
 
@@ -802,6 +806,9 @@ export const useStore = create<AppState>((set, get) => ({
   }),
 
   updateBasePerspective: (quad, options) => {
+    const state = get();
+    const document = state.documents[state.activeDocIndex];
+    if (!document || !canTransformRasterLayer(document, { id: document.baseLayer?.id ?? `base-${document.id}`, type: 'base' })) return;
     get().updateBaseLayer({ perspective: clonePerspectiveQuad(quad) }, options);
   },
 

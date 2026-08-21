@@ -3,6 +3,13 @@ import { createBaseLayerState } from '@/types';
 import type { ImageDocument, ShapeObject, TextObject, WatermarkObject } from '@/types';
 import { useStore } from '@/store/useStore';
 
+const validQuad = {
+  topLeft: { x: 0.1, y: 0.1 },
+  topRight: { x: 0.9, y: 0.1 },
+  bottomRight: { x: 0.9, y: 0.9 },
+  bottomLeft: { x: 0.1, y: 0.9 },
+};
+
 const text: TextObject = {
   id: 'text', text: 'locked', fontFamily: 'Arial', fontSize: 0.05,
   fill: '#000', stroke: '', strokeWidth: 0, shadowColor: 'transparent', shadowBlur: 0,
@@ -24,11 +31,11 @@ function makeDocument(): ImageDocument {
     id: 'doc', file: new File(['x'], 'page.png', { type: 'image/png' }),
     originalSrc: 'blob:page', thumbnail: '', width: 1000, height: 800, name: 'page.png',
     cleanup: { committed: null, strokes: [], locked: true },
-    baseLayer: { ...createBaseLayerState('doc'), x: 0.05, opacity: 1, locked: true },
+    baseLayer: { ...createBaseLayerState('doc'), x: 0.05, opacity: 1, locked: true, perspective: null },
     masks: [{ id: 'mask', name: 'Mask', strokes: [], elements: [], visible: true, opacity: 0.55, locked: true }],
     aiLayers: [{
       id: 'ai', name: 'AI', src: 'data:image/png;base64,x', visible: true, opacity: 1,
-      operation: 'drawing', locked: true, x: 0.1, y: 0.1, scaleX: 1, scaleY: 1, rotation: 0,
+      operation: 'drawing', locked: true, x: 0.1, y: 0.1, scaleX: 1, scaleY: 1, rotation: 0, perspective: null,
     }],
     activeMaskId: 'mask', selectedLayer: null,
     watermarks: [watermark], texts: [text], shapes: [shape], bubbles: [],
@@ -99,6 +106,23 @@ describe('store layer locking', () => {
     expect(unchanged.baseLayer).toMatchObject({ locked: true, crop: null, x: 0.2 });
     expect(unchanged.baseLayer.eraseElements).toHaveLength(1);
     expect(unchanged.aiLayers[0].eraseElements).toHaveLength(1);
+    expect(unchanged.past).toHaveLength(0);
+  });
+
+  // Mutation caught: removing the direct perspective-action lock check would
+  // mutate either raster layer and create an undo snapshot.
+  it('does not update perspective on locked base or AI layers', () => {
+    useStore.getState().updateBasePerspective(validQuad);
+    let unchanged = useStore.getState().documents[0];
+    expect(unchanged.baseLayer.perspective).toBeNull();
+    expect(unchanged.past).toHaveLength(0);
+
+    const lockedAiDocument = makeDocument();
+    lockedAiDocument.aiLayers[0] = { ...lockedAiDocument.aiLayers[0], id: 'ai-locked' };
+    useStore.setState({ documents: [lockedAiDocument], activeDocIndex: 0 });
+    useStore.getState().updateAiLayerPerspective('ai-locked', validQuad);
+    unchanged = useStore.getState().documents[0];
+    expect(unchanged.aiLayers[0].perspective).toBeNull();
     expect(unchanged.past).toHaveLength(0);
   });
 });
