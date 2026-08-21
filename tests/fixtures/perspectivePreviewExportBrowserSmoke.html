@@ -19,7 +19,11 @@
       try {
         const comparison = runPerspectivePreviewExportBrowserSmoke();
         result.dataset.status = 'passed';
-        result.textContent = `PASS\n${JSON.stringify({ maxDelta: comparison.maxDelta, samples: comparison.samples }, null, 2)}`;
+        result.textContent = `PASS\n${JSON.stringify({
+          maxDelta: comparison.maxDelta,
+          samples: comparison.samples,
+          combinedCrop: comparison.combinedCrop,
+        }, null, 2)}`;
         const images = document.querySelector('#images');
         for (const [label, src] of [['Preview', comparison.preview], ['Export', comparison.exported]]) {
           const figure = document.createElement('figure');

@@ -4,18 +4,21 @@ import { useEffect, useRef, useState } from 'react';
 import { Circle, Layer, Line } from 'react-konva';
 import type { ImageDocument, PerspectiveQuad, ViewportState } from '@/types';
 import { useStore } from '@/store/useStore';
+import { useEditorUiStore } from '@/store/useEditorUiStore';
 import { canTransformRasterLayer } from '@/utils/layerGuards';
 import { clonePerspectiveQuad, isValidPerspectiveQuad } from '@/utils/perspective';
 
 const PERSPECTIVE_KEYS = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const;
 
-function PerspectiveHandles({ quad, width, height, onChange }: {
+function PerspectiveHandles({ quad, width, height, onChange, dragLayerKey }: {
   quad: PerspectiveQuad;
   width: number;
   height: number;
   onChange: (quad: PerspectiveQuad) => void;
+  dragLayerKey: string;
 }) {
   const pushHistory = useStore(state => state.pushHistory);
+  const setPerspectiveDragLayerKey = useEditorUiStore(state => state.setPerspectiveDragLayerKey);
   const frameRef = useRef<number | null>(null);
   const pendingRef = useRef<PerspectiveQuad | null>(null);
   const draggingRef = useRef(false);
@@ -38,7 +41,10 @@ function PerspectiveHandles({ quad, width, height, onChange }: {
 
   useEffect(() => () => {
     if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
-  }, []);
+    if (useEditorUiStore.getState().perspectiveDragLayerKey === dragLayerKey) {
+      useEditorUiStore.getState().setPerspectiveDragLayerKey(null);
+    }
+  }, [dragLayerKey]);
 
   const flush = () => {
     frameRef.current = null;
@@ -80,6 +86,7 @@ function PerspectiveHandles({ quad, width, height, onChange }: {
             draggable
             onDragStart={() => {
               draggingRef.current = true;
+              setPerspectiveDragLayerKey(dragLayerKey);
               const start = clonePerspectiveQuad(quad)!;
               setDraft(start);
               lastValidRef.current = start;
@@ -104,7 +111,15 @@ function PerspectiveHandles({ quad, width, height, onChange }: {
               setDraft(committed);
               event.target.position({ x: committed[key].x * width, y: committed[key].y * height });
               draggingRef.current = false;
+              setPerspectiveDragLayerKey(null);
               onChange(committed);
+            }}
+            onPointerCancel={() => {
+              if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+              frameRef.current = null;
+              pendingRef.current = null;
+              draggingRef.current = false;
+              setPerspectiveDragLayerKey(null);
             }}
           />
         );
@@ -128,7 +143,7 @@ export function PerspectiveOverlay({ document, width, height, viewport }: {
     : selectedLayer?.type === 'ai'
       ? document.aiLayers.find(layer => layer.id === selectedLayer.id)
       : null;
-  if (!target?.perspective) return null;
+  if (!selectedLayer || !target?.perspective) return null;
 
   return (
     <Layer x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={viewport.scale}>
@@ -136,6 +151,7 @@ export function PerspectiveOverlay({ document, width, height, viewport }: {
         quad={target.perspective}
         width={width}
         height={height}
+        dragLayerKey={`${selectedLayer.type}:${selectedLayer.id}`}
         onChange={quad => {
           if (selectedLayer?.type === 'base') updateBasePerspective(quad, { history: false });
           else if (selectedLayer?.type === 'ai') updateAiLayerPerspective(selectedLayer.id, quad, { history: false });

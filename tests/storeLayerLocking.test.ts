@@ -11,6 +11,13 @@ const validQuad = {
   bottomLeft: { x: 0.1, y: 0.9 },
 };
 
+const concaveQuad = {
+  topLeft: { x: 0, y: 0 },
+  topRight: { x: 1, y: 0 },
+  bottomRight: { x: 0.2, y: 0.2 },
+  bottomLeft: { x: 0, y: 1 },
+};
+
 const text: TextObject = {
   id: 'text', text: 'locked', fontFamily: 'Arial', fontSize: 0.05,
   fill: '#000', stroke: '', strokeWidth: 0, shadowColor: 'transparent', shadowBlur: 0,
@@ -63,6 +70,29 @@ describe('store layer locking', () => {
     expect(doc.watermarks[0]).toMatchObject({ rotation: 0, visible: false });
     expect(doc.aiLayers[0]).toMatchObject({ x: 0.1, opacity: 0.4 });
     expect(doc.baseLayer).toMatchObject({ x: 0.05, opacity: 0.3 });
+  });
+
+  // Mutation caught: omitting perspectiveSourceBounds from the central
+  // geometry-key set lets generic update actions reshape locked raster data.
+  it('blocks perspective source-bound metadata updates on locked raster layers', () => {
+    const current = makeDocument();
+    const originalBounds = { x: 0.1, y: 0.2, width: 0.6, height: 0.5 };
+    current.baseLayer = { ...current.baseLayer, perspectiveSourceBounds: originalBounds };
+    current.aiLayers[0] = { ...current.aiLayers[0], perspectiveSourceBounds: { ...originalBounds } };
+    useStore.setState({ documents: [current], activeDocIndex: 0 });
+
+    useStore.getState().updateBaseLayer({
+      perspectiveSourceBounds: { x: 0.25, y: 0.25, width: 0.25, height: 0.25 },
+    });
+    useStore.getState().updateAiLayer('ai', {
+      perspectiveSourceBounds: { x: 0.3, y: 0.1, width: 0.4, height: 0.7 },
+    });
+
+    const unchanged = useStore.getState().documents[0];
+    expect(unchanged.baseLayer.perspectiveSourceBounds).toEqual(originalBounds);
+    expect(unchanged.aiLayers[0].perspectiveSourceBounds).toEqual(originalBounds);
+    expect(unchanged.past).toHaveLength(0);
+    expect(unchanged.hasChanges).toBe(false);
   });
 
   it('does not add strokes or mask elements to locked paint layers', () => {
@@ -127,6 +157,32 @@ describe('store layer locking', () => {
     expect(unchanged.past).toHaveLength(0);
   });
 
+  // Mutation caught: relying on UI validation lets direct store callers write
+  // a concave quad and manufacture a history entry.
+  it('rejects concave perspective updates before mutating base or AI layers', () => {
+    const baseDocument = makeDocument();
+    baseDocument.baseLayer = { ...baseDocument.baseLayer, locked: false };
+    useStore.setState({ documents: [baseDocument], activeDocIndex: 0 });
+
+    useStore.getState().updateBasePerspective(concaveQuad);
+
+    let unchanged = useStore.getState().documents[0];
+    expect(unchanged.baseLayer.perspective).toBeNull();
+    expect(unchanged.past).toHaveLength(0);
+    expect(unchanged.hasChanges).toBe(false);
+
+    const aiDocument = makeDocument();
+    aiDocument.aiLayers[0] = { ...aiDocument.aiLayers[0], locked: false };
+    useStore.setState({ documents: [aiDocument], activeDocIndex: 0 });
+
+    useStore.getState().updateAiLayerPerspective('ai', concaveQuad);
+
+    unchanged = useStore.getState().documents[0];
+    expect(unchanged.aiLayers[0].perspective).toBeNull();
+    expect(unchanged.past).toHaveLength(0);
+    expect(unchanged.hasChanges).toBe(false);
+  });
+
   // Mutations caught: accepting a mismatched/missing layer reference, treating
   // either locked raster type as transformable, or rejecting a legacy unlocked
   // AI layer whose optional lock field is absent.
@@ -158,5 +214,25 @@ describe('store layer locking', () => {
     expect(after.aiLayers).toEqual(before.aiLayers);
     expect(after.past).toHaveLength(0);
     expect(after.hasChanges).toBe(false);
+  });
+
+  // Mutation caught: copying only the quad drops the source rectangle that
+  // defines which original pixels are mapped into that quad.
+  it('duplicates base perspective source bounds as independent layer metadata', () => {
+    const current = makeDocument();
+    const sourceBounds = { x: 0.12, y: 0.18, width: 0.64, height: 0.58 };
+    current.baseLayer = {
+      ...current.baseLayer,
+      perspective: validQuad,
+      perspectiveSourceBounds: sourceBounds,
+    };
+    useStore.setState({ documents: [current], activeDocIndex: 0 });
+
+    const copyId = useStore.getState().duplicateBaseLayer();
+
+    const copy = useStore.getState().documents[0].aiLayers.find(layer => layer.id === copyId);
+    expect(copy?.perspective).toEqual(validQuad);
+    expect(copy?.perspectiveSourceBounds).toEqual(sourceBounds);
+    expect(copy?.perspectiveSourceBounds).not.toBe(sourceBounds);
   });
 });

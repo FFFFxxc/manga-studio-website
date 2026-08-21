@@ -35,7 +35,7 @@ import type {
 } from '../types';
 import { DEFAULT_ANIME_FONT, DEFAULT_BASE_ADJUSTMENTS, DEFAULT_LAYER_TRANSFORM } from '../types';
 import { resolveLayerOrder, layerRefKey } from '@/utils/layerOrder';
-import { clonePerspectiveQuad } from '@/utils/perspective';
+import { clonePerspectiveQuad, isValidPerspectiveQuad } from '@/utils/perspective';
 import { cloneGlowStyle, clonePaintStyle } from '@/utils/objectPaint';
 import { storeDefaultTranslationFont } from '@/utils/fonts';
 import { filterLockedGeometryUpdates } from '@/utils/lockedUpdates';
@@ -706,6 +706,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateAiLayerPerspective: (id, quad, options) => set(state => {
     if (state.activeDocIndex < 0) return {};
+    if (quad && !isValidPerspectiveQuad(quad)) return {};
     const current = state.documents[state.activeDocIndex];
     if (!canTransformRasterLayer(current, { id, type: 'ai' })) return {};
     const documents = [...state.documents];
@@ -783,6 +784,9 @@ export const useStore = create<AppState>((set, get) => ({
         scaleY: base?.scaleY ?? 1,
         rotation: base?.rotation ?? 0,
         perspective: clonePerspectiveQuad(base?.perspective),
+        perspectiveSourceBounds: base?.perspectiveSourceBounds
+          ? { ...base.perspectiveSourceBounds }
+          : null,
       };
       const order = resolveLayerOrder(doc);
       const baseIndex = order.findIndex(ref => ref.type === 'base');
@@ -815,6 +819,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   updateBasePerspective: (quad, options) => set(state => {
     if (state.activeDocIndex < 0) return {};
+    if (quad && !isValidPerspectiveQuad(quad)) return {};
     const current = state.documents[state.activeDocIndex];
     const baseLayer = current.baseLayer ?? createBaseLayerState(current.id);
     if (!canTransformRasterLayer(current, { id: baseLayer.id, type: 'base' })) return {};

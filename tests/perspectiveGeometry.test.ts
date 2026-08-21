@@ -12,6 +12,17 @@ const rectangle = {
 };
 
 describe('perspective geometry quality', () => {
+  // Mutation caught: accepting a non-self-intersecting inward corner because
+  // only signed area and opposite-edge intersections were checked.
+  it('rejects a concave quad whose edges do not self-intersect', () => {
+    expect(isValidPerspectiveQuad({
+      topLeft: { x: 0, y: 0 },
+      topRight: { x: 1, y: 0 },
+      bottomRight: { x: 0.2, y: 0.2 },
+      bottomLeft: { x: 0, y: 1 },
+    })).toBe(false);
+  });
+
   it('rejects a short edge even when the polygon area is large enough', () => {
     expect(isValidPerspectiveQuad({
       ...rectangle,

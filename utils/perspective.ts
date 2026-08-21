@@ -124,6 +124,10 @@ export function isValidPerspectiveQuad(
     const next = points[(index + 1) % points.length];
     return Math.hypot(point.x - next.x, point.y - next.y) < minEdge;
   })) return false;
+  const turnSign = Math.sign(cross(points[0], points[1], points[2]));
+  if (turnSign === 0 || points.some((point, index) => (
+    Math.sign(cross(point, points[(index + 1) % points.length], points[(index + 2) % points.length])) !== turnSign
+  ))) return false;
   return !segmentsIntersect(points[0], points[1], points[2], points[3])
     && !segmentsIntersect(points[1], points[2], points[3], points[0]);
 }

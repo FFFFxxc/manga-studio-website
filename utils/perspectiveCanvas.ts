@@ -102,6 +102,15 @@ function getSourceSize(source: CanvasImageSource) {
   };
 }
 
+function intersectRects(left: NormalizedRect, right: NormalizedRect): NormalizedRect | null {
+  const x = Math.max(left.x, right.x);
+  const y = Math.max(left.y, right.y);
+  const rightEdge = Math.min(left.x + left.width, right.x + right.width);
+  const bottomEdge = Math.min(left.y + left.height, right.y + right.height);
+  if (rightEdge <= x || bottomEdge <= y) return null;
+  return { x, y, width: rightEdge - x, height: bottomEdge - y };
+}
+
 export function drawPerspectiveCanvas(
   ctx: CanvasRenderingContext2D,
   source: CanvasImageSource,
@@ -116,19 +125,29 @@ export function drawPerspectiveCanvas(
   if (!sourceSize.width || !sourceSize.height) return;
   const crop = options.crop ?? { x: 0, y: 0, width: 1, height: 1 };
   const sourceBounds = options.sourceBounds ?? null;
+  if (crop.width <= 0 || crop.height <= 0) return;
+  if (sourceBounds && (sourceBounds.width <= 0 || sourceBounds.height <= 0)) return;
+  const sampledSource = sourceBounds ? intersectRects(crop, sourceBounds) : crop;
+  if (!sampledSource) return;
+  const destination = sourceBounds
+    ? {
+        x: (sampledSource.x - sourceBounds.x) / sourceBounds.width,
+        y: (sampledSource.y - sourceBounds.y) / sourceBounds.height,
+        width: sampledSource.width / sourceBounds.width,
+        height: sampledSource.height / sourceBounds.height,
+      }
+    : sampledSource;
   const subdivisions = options.subdivisions == null
     ? getPerspectiveSubdivisionCount(quad, width, height, options.quality ?? 'preview')
     : Math.max(2, Math.min(32, Math.round(options.subdivisions)));
   const seamOverlapPx = Math.max(0, options.seamOverlapPx ?? 0.75);
-  const outerSource = sourceBounds
-    ? [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]
-    : [
-        { x: crop.x, y: crop.y },
-        { x: crop.x + crop.width, y: crop.y },
-        { x: crop.x + crop.width, y: crop.y + crop.height },
-        { x: crop.x, y: crop.y + crop.height },
-      ];
-  const outer = outerSource.map(point => projectHomography(homography, point));
+  const outerDestination = [
+    { x: destination.x, y: destination.y },
+    { x: destination.x + destination.width, y: destination.y },
+    { x: destination.x + destination.width, y: destination.y + destination.height },
+    { x: destination.x, y: destination.y + destination.height },
+  ];
+  const outer = outerDestination.map(point => projectHomography(homography, point));
   const bounds = getBounds(outer);
   if (bounds.width <= 0 || bounds.height <= 0) return;
   const canvas = createCanvas(options);
@@ -142,21 +161,25 @@ export function drawPerspectiveCanvas(
   for (let row = 0; row < subdivisions; row++) {
     const localV0 = row / subdivisions;
     const localV1 = (row + 1) / subdivisions;
-    const v0 = sourceBounds ? sourceBounds.y + sourceBounds.height * localV0 : crop.y + crop.height * localV0;
-    const v1 = sourceBounds ? sourceBounds.y + sourceBounds.height * localV1 : crop.y + crop.height * localV1;
+    const v0 = sampledSource.y + sampledSource.height * localV0;
+    const v1 = sampledSource.y + sampledSource.height * localV1;
+    const destinationV0 = destination.y + destination.height * localV0;
+    const destinationV1 = destination.y + destination.height * localV1;
     for (let column = 0; column < subdivisions; column++) {
       const localU0 = column / subdivisions;
       const localU1 = (column + 1) / subdivisions;
-      const u0 = sourceBounds ? sourceBounds.x + sourceBounds.width * localU0 : crop.x + crop.width * localU0;
-      const u1 = sourceBounds ? sourceBounds.x + sourceBounds.width * localU1 : crop.x + crop.width * localU1;
+      const u0 = sampledSource.x + sampledSource.width * localU0;
+      const u1 = sampledSource.x + sampledSource.width * localU1;
+      const destinationU0 = destination.x + destination.width * localU0;
+      const destinationU1 = destination.x + destination.width * localU1;
       const s00 = { x: u0 * sourceSize.width, y: v0 * sourceSize.height };
       const s10 = { x: u1 * sourceSize.width, y: v0 * sourceSize.height };
       const s11 = { x: u1 * sourceSize.width, y: v1 * sourceSize.height };
       const s01 = { x: u0 * sourceSize.width, y: v1 * sourceSize.height };
-      const d00 = projectHomography(homography, sourceBounds ? { x: localU0, y: localV0 } : { x: u0, y: v0 });
-      const d10 = projectHomography(homography, sourceBounds ? { x: localU1, y: localV0 } : { x: u1, y: v0 });
-      const d11 = projectHomography(homography, sourceBounds ? { x: localU1, y: localV1 } : { x: u1, y: v1 });
-      const d01 = projectHomography(homography, sourceBounds ? { x: localU0, y: localV1 } : { x: u0, y: v1 });
+      const d00 = projectHomography(homography, { x: destinationU0, y: destinationV0 });
+      const d10 = projectHomography(homography, { x: destinationU1, y: destinationV0 });
+      const d11 = projectHomography(homography, { x: destinationU1, y: destinationV1 });
+      const d01 = projectHomography(homography, { x: destinationU0, y: destinationV1 });
       drawTriangle(meshContext, source, [s00, s10, s11], [localize(d00), localize(d10), localize(d11)], seamOverlapPx);
       drawTriangle(meshContext, source, [s00, s11, s01], [localize(d00), localize(d11), localize(d01)], seamOverlapPx);
     }

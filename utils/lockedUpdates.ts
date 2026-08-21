@@ -8,6 +8,7 @@ const GEOMETRY_KEYS = new Set([
   'rotation',
   'crop',
   'perspective',
+  'perspectiveSourceBounds',
 ]);
 
 export function filterLockedGeometryUpdates<T extends object>(

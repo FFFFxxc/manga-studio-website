@@ -206,4 +206,31 @@ describe('perspective Canvas renderer', () => {
     expect(vi.mocked(mesh.ctx.drawImage).mock.calls.every(([image]) => image === source)).toBe(true);
     expect(target.ctx.drawImage).toHaveBeenCalledWith(canvas, 0, 0, 200, 100);
   });
+
+  // Mutation caught: ignoring crop whenever sourceBounds is present stretches
+  // the full source-bounds sample across the quad instead of retaining the
+  // crop's original-source position inside that mapping.
+  it('maps the crop and source-bounds intersection into its local quad subregion', () => {
+    const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
+    const target = createRecordingContext();
+    const mesh = createRecordingContext();
+    const canvas = createRecordingCanvas(mesh.ctx);
+
+    drawPerspectiveImage(target.ctx, source, rectangle, 200, 100, {
+      sourceBounds: { x: 0.125, y: 0.125, width: 0.5, height: 0.5 },
+      crop: { x: 0.1875, y: 0.25, width: 0.25, height: 0.1875 },
+      subdivisions: 2,
+      canvasFactory: () => canvas,
+    });
+
+    const expectedPath = [[25, 25], [125, 25], [125, 62.5], [25, 62.5]];
+    expect(target.paths[0]).toHaveLength(expectedPath.length);
+    target.paths[0].forEach(([x, y], index) => {
+      expect(x).toBeCloseTo(expectedPath[index][0], 8);
+      expect(y).toBeCloseTo(expectedPath[index][1], 8);
+    });
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(38);
+    expect(target.ctx.drawImage).toHaveBeenCalledWith(canvas, 25, 25, 100, 38);
+  });
 });

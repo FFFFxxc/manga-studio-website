@@ -32,9 +32,12 @@ export interface ToolOptionsRequest {
 
 interface EditorUiState {
   activeOperation: ActiveEditorOperation | null;
+  /** Selected raster layer whose perspective corner is actively being dragged. */
+  perspectiveDragLayerKey: string | null;
   toolOptions: ToolOptionsRequest | null;
   floatingDismiss: (() => void) | null;
   beginOperation: (operation: ActiveEditorOperation) => void;
+  setPerspectiveDragLayerKey: (layerKey: string | null) => void;
   commitActiveOperation: () => boolean;
   cancelActiveOperation: () => boolean;
   openToolOptions: (request: ToolOptionsRequest) => void;
@@ -46,19 +49,22 @@ interface EditorUiState {
 
 export const useEditorUiStore = create<EditorUiState>((set, get) => ({
   activeOperation: null,
+  perspectiveDragLayerKey: null,
   toolOptions: null,
   floatingDismiss: null,
 
   beginOperation: operation => {
     const current = get().activeOperation;
     if (current && current.id !== operation.id) void current.cancel();
-    set({ activeOperation: operation });
+    set({ activeOperation: operation, perspectiveDragLayerKey: null });
   },
+
+  setPerspectiveDragLayerKey: perspectiveDragLayerKey => set({ perspectiveDragLayerKey }),
 
   commitActiveOperation: () => {
     const operation = get().activeOperation;
     if (!operation) return false;
-    set({ activeOperation: null });
+    set({ activeOperation: null, perspectiveDragLayerKey: null });
     void operation.commit();
     return true;
   },
@@ -66,7 +72,7 @@ export const useEditorUiStore = create<EditorUiState>((set, get) => ({
   cancelActiveOperation: () => {
     const operation = get().activeOperation;
     if (!operation) return false;
-    set({ activeOperation: null });
+    set({ activeOperation: null, perspectiveDragLayerKey: null });
     void operation.cancel();
     return true;
   },
@@ -85,7 +91,7 @@ export const useEditorUiStore = create<EditorUiState>((set, get) => ({
     dismiss();
     return true;
   },
-  clearTransientUi: () => set({ toolOptions: null, floatingDismiss: null }),
+  clearTransientUi: () => set({ toolOptions: null, floatingDismiss: null, perspectiveDragLayerKey: null }),
 }));
 
 export function beginEditorOperation(

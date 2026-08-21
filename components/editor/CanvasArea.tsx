@@ -124,11 +124,13 @@ interface RasterNodePlacement {
   perspectiveSourceBounds?: CropRect | null;
 }
 
+type RasterLayerRef = { id: string; type: 'base' | 'ai' };
+
 /**
  * Wraps a raster image with its non-destructive transform + crop and, when
  * selected with the select tool and unlocked, makes it draggable/transformable.
  */
-function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, width, height, opacity, placement, adjustments, interactive, isSelected, onSelect, onContextMenu, onBeforeChange, onChange }: {
+export function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, width, height, opacity, placement, adjustments, interactive, isSelected, onSelect, onContextMenu, onBeforeChange, onChange, layerRef }: {
   nodeName: string;
   image: CanvasImageSource;
   /** Stable source URL/id and the content revision used for perspective preview caching. */
@@ -145,12 +147,15 @@ function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, wi
   onContextMenu: (e: Konva.KonvaEventObject<PointerEvent>) => void;
   onBeforeChange: () => void;
   onChange: (updates: { x?: number; y?: number; scaleX?: number; scaleY?: number; rotation?: number; perspective?: PerspectiveQuad | null }) => void;
+  layerRef: RasterLayerRef;
 }) {
-  const perspectivePreviewActive = useEditorUiStore(state => state.activeOperation?.kind === 'perspective');
+  const layerKey = `${layerRef.type}:${layerRef.id}`;
+  const perspectiveDragActive = useEditorUiStore(state => state.perspectiveDragLayerKey === layerKey);
   const groupRef = useRef<Konva.Group>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const imageRef = useRef<Konva.Image>(null);
   const [perspectiveCanvas, setPerspectiveCanvas] = useState<HTMLCanvasElement | null>(null);
+  const renderedSourceRef = useRef<{ key: string; image: CanvasImageSource } | null>(null);
   const draggable = interactive && isSelected;
 
   useEffect(() => {
@@ -166,7 +171,8 @@ function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, wi
   const naturalH = (image as HTMLImageElement).naturalHeight || (image as HTMLCanvasElement).height || height;
   const previewWidth = Math.max(1, Math.round(width));
   const previewHeight = Math.max(1, Math.round(height));
-  const perspectiveQuality = perspectivePreviewActive ? 'drag' : 'preview';
+  const perspectiveQuality = perspectiveDragActive ? 'drag' : 'preview';
+  const sourceKey = `${sourceIdentity}|${sourceRevision}`;
   // This key contains only pixels/geometry that affect the rendered preview.
   // In particular it deliberately excludes unrelated editor/UI state.
   const perspectivePreviewCacheKey = [
@@ -184,7 +190,16 @@ function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, wi
   const filterValues = toKonvaAdjustmentValues(adjustments);
 
   useEffect(() => {
-    if (!perspective) { setPerspectiveCanvas(null); return; }
+    if (!perspective) {
+      renderedSourceRef.current = null;
+      setPerspectiveCanvas(null);
+      return;
+    }
+    const renderedSource = renderedSourceRef.current;
+    if (renderedSource && renderedSource.key !== sourceKey && renderedSource.image === image) {
+      setPerspectiveCanvas(null);
+      return;
+    }
     const next = document.createElement('canvas');
     next.width = previewWidth;
     next.height = previewHeight;
@@ -194,10 +209,14 @@ function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, wi
       crop,
       sourceBounds: placement.perspectiveSourceBounds,
       opacity,
-      quality: perspectivePreviewActive ? 'drag' : 'preview',
+      quality: perspectiveQuality,
     });
+    renderedSourceRef.current = { key: sourceKey, image };
     setPerspectiveCanvas(next);
-  }, [perspectivePreviewCacheKey]);
+    // The serialized key covers value inputs; image identity is deliberately a
+    // separate dependency because async image/canvas resolution changes it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perspectivePreviewCacheKey, image]);
 
   useEffect(() => {
     const node = imageRef.current;
@@ -218,13 +237,16 @@ function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, wi
   } : { filters: [] };
 
   if (perspective) {
+    const currentPerspectiveCanvas = renderedSourceRef.current?.key === sourceKey
+      ? perspectiveCanvas
+      : null;
     return (
       <>
-        {perspectiveCanvas && (
+        {currentPerspectiveCanvas && (
           <KonvaImage
             ref={imageRef}
             name={nodeName}
-            image={perspectiveCanvas}
+            image={currentPerspectiveCanvas}
             width={width}
             height={height}
             listening={interactive}
@@ -340,6 +362,7 @@ function RasterLayerNode({ layer, width, height, interactive, isSelected, onSele
       onContextMenu={onContextMenu}
       onBeforeChange={pushHistory}
       onChange={updates => updateAiLayer(layer.id, updates, { history: false })}
+      layerRef={{ id: layer.id, type: 'ai' }}
     />
   );
 }
@@ -394,6 +417,7 @@ function BaseLayerNode({ doc, width, height, interactive, isSelected, onSelect, 
       onContextMenu={onContextMenu}
       onBeforeChange={pushHistory}
       onChange={updates => updateBaseLayer(updates, { history: false })}
+      layerRef={{ id: state?.id ?? `base-${doc.id}`, type: 'base' }}
     />
   );
 }
