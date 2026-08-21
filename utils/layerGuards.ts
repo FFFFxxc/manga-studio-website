@@ -5,7 +5,9 @@ export function canTransformRasterLayer(
   selectedLayer: SelectedLayer | null | undefined,
 ): boolean {
   if (!selectedLayer) return false;
-  if (selectedLayer.type === 'base') return document.baseLayer?.locked === false;
+  if (selectedLayer.type === 'base') {
+    return document.baseLayer?.id === selectedLayer.id && document.baseLayer.locked === false;
+  }
   if (selectedLayer.type === 'ai') {
     const layer = document.aiLayers.find(candidate => candidate.id === selectedLayer.id);
     return Boolean(layer && layer.locked !== true);

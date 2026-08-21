@@ -704,12 +704,20 @@ export const useStore = create<AppState>((set, get) => ({
     return { documents: docs };
   }),
 
-  updateAiLayerPerspective: (id, quad, options) => {
-    const state = get();
-    const document = state.documents[state.activeDocIndex];
-    if (!document || !canTransformRasterLayer(document, { id, type: 'ai' })) return;
-    get().updateAiLayer(id, { perspective: clonePerspectiveQuad(quad) }, options);
-  },
+  updateAiLayerPerspective: (id, quad, options) => set(state => {
+    if (state.activeDocIndex < 0) return {};
+    const current = state.documents[state.activeDocIndex];
+    if (!canTransformRasterLayer(current, { id, type: 'ai' })) return {};
+    const documents = [...state.documents];
+    const document = options?.history === false ? { ...current, hasChanges: true } : withHistory(current);
+    documents[state.activeDocIndex] = {
+      ...document,
+      aiLayers: document.aiLayers.map(layer => layer.id === id
+        ? { ...layer, perspective: clonePerspectiveQuad(quad) }
+        : layer),
+    };
+    return { documents };
+  }),
 
   deleteAiLayer: (id) => set(state => {
     if (state.activeDocIndex < 0) return {};
@@ -805,12 +813,19 @@ export const useStore = create<AppState>((set, get) => ({
     return { documents: docs };
   }),
 
-  updateBasePerspective: (quad, options) => {
-    const state = get();
-    const document = state.documents[state.activeDocIndex];
-    if (!document || !canTransformRasterLayer(document, { id: document.baseLayer?.id ?? `base-${document.id}`, type: 'base' })) return;
-    get().updateBaseLayer({ perspective: clonePerspectiveQuad(quad) }, options);
-  },
+  updateBasePerspective: (quad, options) => set(state => {
+    if (state.activeDocIndex < 0) return {};
+    const current = state.documents[state.activeDocIndex];
+    const baseLayer = current.baseLayer ?? createBaseLayerState(current.id);
+    if (!canTransformRasterLayer(current, { id: baseLayer.id, type: 'base' })) return {};
+    const documents = [...state.documents];
+    const document = options?.history === false ? { ...current, hasChanges: true } : withHistory(current);
+    documents[state.activeDocIndex] = {
+      ...document,
+      baseLayer: { ...baseLayer, perspective: clonePerspectiveQuad(quad) },
+    };
+    return { documents };
+  }),
 
   resetBaseLayerSettings: () => set(state => {
     if (state.activeDocIndex < 0) return {};

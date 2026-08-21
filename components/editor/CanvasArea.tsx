@@ -18,7 +18,7 @@ import { copySelectionFragment, pasteFragmentAsLayer, shouldPasteFragment } from
 import { BubbleNode } from './BubbleNode';
 import { InlineTextEditor } from './InlineTextEditor';
 import { drawBrushStroke } from '@/utils/brushRaster';
-import { clonePerspectiveQuad, drawPerspectiveImage, isValidPerspectiveQuad } from '@/utils/perspective';
+import { drawPerspectiveImage, isValidPerspectiveQuad } from '@/utils/perspective';
 import {
   getCurvedArrowCurveFromHandle,
   getCurvedArrowHandlePosition,
@@ -42,7 +42,7 @@ import { toKonvaAdjustmentValues } from '@/utils/konvaAdjustments';
 import { toast } from '@/hooks/use-toast';
 import { beginEditorOperation, useEditorUiStore } from '@/store/useEditorUiStore';
 import { applyRasterEffectPreview } from '@/utils/rasterEffects';
-import { canTransformRasterLayer } from '@/utils/layerGuards';
+import { PerspectiveOverlay } from './PerspectiveOverlay';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -122,112 +122,6 @@ interface RasterNodePlacement {
   crop?: CropRect | null;
   perspective?: PerspectiveQuad | null;
   perspectiveSourceBounds?: CropRect | null;
-}
-
-const PERSPECTIVE_KEYS = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const;
-
-export function PerspectiveHandles({ quad, width, height, onChange }: {
-  quad: PerspectiveQuad;
-  width: number;
-  height: number;
-  onChange: (quad: PerspectiveQuad) => void;
-}) {
-  const pushHistory = useStore(state => state.pushHistory);
-  const frameRef = useRef<number | null>(null);
-  const pendingRef = useRef<PerspectiveQuad | null>(null);
-  const draggingRef = useRef(false);
-  const [draftQuad, setDraftQuad] = useState(() => clonePerspectiveQuad(quad)!);
-  const draftRef = useRef(draftQuad);
-  const lastValidRef = useRef(clonePerspectiveQuad(quad)!);
-
-  const setDraft = (next: PerspectiveQuad) => {
-    draftRef.current = next;
-    setDraftQuad(next);
-  };
-
-  useEffect(() => {
-    if (draggingRef.current) return;
-    const next = clonePerspectiveQuad(quad)!;
-    draftRef.current = next;
-    lastValidRef.current = next;
-    setDraftQuad(next);
-  }, [quad]);
-
-  useEffect(() => () => {
-    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
-  }, []);
-
-  const flush = () => {
-    frameRef.current = null;
-    const pending = pendingRef.current;
-    pendingRef.current = null;
-    if (pending) onChange(pending);
-  };
-  const schedule = (next: PerspectiveQuad) => {
-    pendingRef.current = next;
-    if (frameRef.current === null) frameRef.current = window.requestAnimationFrame(flush);
-  };
-  const linePoints = PERSPECTIVE_KEYS.flatMap(key => [draftQuad[key].x * width, draftQuad[key].y * height]);
-  const interpolate = (a: { x: number; y: number }, b: { x: number; y: number }, value: number) => ({ x: a.x + (b.x - a.x) * value, y: a.y + (b.y - a.y) * value });
-
-  return (
-    <>
-      <Line points={linePoints} closed stroke="#5e9fe8" strokeWidth={2} dash={[7, 4]} listening={false} />
-      {[0.25, 0.5, 0.75].flatMap(value => {
-        const left = interpolate(draftQuad.topLeft, draftQuad.bottomLeft, value);
-        const right = interpolate(draftQuad.topRight, draftQuad.bottomRight, value);
-        const top = interpolate(draftQuad.topLeft, draftQuad.topRight, value);
-        const bottom = interpolate(draftQuad.bottomLeft, draftQuad.bottomRight, value);
-        return [
-          <Line key={`h-${value}`} points={[left.x * width, left.y * height, right.x * width, right.y * height]} stroke="rgba(94,159,232,.55)" strokeWidth={1} listening={false} />,
-          <Line key={`v-${value}`} points={[top.x * width, top.y * height, bottom.x * width, bottom.y * height]} stroke="rgba(94,159,232,.55)" strokeWidth={1} listening={false} />,
-        ];
-      })}
-      {PERSPECTIVE_KEYS.map(key => {
-        const point = draftQuad[key];
-        return (
-          <Circle
-            key={key}
-            x={point.x * width}
-            y={point.y * height}
-            radius={7}
-            fill="#ffffff"
-            stroke="#5e9fe8"
-            strokeWidth={2}
-            draggable
-            onDragStart={() => {
-              draggingRef.current = true;
-              const start = clonePerspectiveQuad(quad)!;
-              setDraft(start);
-              lastValidRef.current = start;
-              pushHistory();
-            }}
-            onDragMove={event => {
-              const next = clonePerspectiveQuad(draftRef.current)!;
-              next[key] = { x: event.target.x() / width, y: event.target.y() / height };
-              setDraft(next);
-              if (isValidPerspectiveQuad(next)) {
-                lastValidRef.current = next;
-                schedule(next);
-              }
-            }}
-            onDragEnd={event => {
-              const next = clonePerspectiveQuad(draftRef.current)!;
-              next[key] = { x: event.target.x() / width, y: event.target.y() / height };
-              if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
-              frameRef.current = null;
-              pendingRef.current = null;
-              const committed = isValidPerspectiveQuad(next) ? next : clonePerspectiveQuad(lastValidRef.current)!;
-              setDraft(committed);
-              event.target.position({ x: committed[key].x * width, y: committed[key].y * height });
-              draggingRef.current = false;
-              onChange(committed);
-            }}
-          />
-        );
-      })}
-    </>
-  );
 }
 
 /**
@@ -1108,7 +1002,7 @@ export function CanvasArea() {
     addDocuments,
     pushHistory, setLeftTab,
     fontsVersion, cropRect, cropSettings, setCropRect, updateDocumentThumbnail,
-    layerCropTarget, applyLayerCrop, cancelLayerCrop, updateAiLayerPerspective, updateBasePerspective,
+    layerCropTarget, applyLayerCrop, cancelLayerCrop,
   } = useStore(useShallow(state => ({
     documents: state.documents,
     activeDocIndex: state.activeDocIndex,
@@ -1147,8 +1041,6 @@ export function CanvasArea() {
     layerCropTarget: state.layerCropTarget,
     applyLayerCrop: state.applyLayerCrop,
     cancelLayerCrop: state.cancelLayerCrop,
-    updateAiLayerPerspective: state.updateAiLayerPerspective,
-    updateBasePerspective: state.updateBasePerspective,
   })));
   const activeOperation = useEditorUiStore(state => state.activeOperation);
 
@@ -2651,28 +2543,9 @@ export function CanvasArea() {
             )}
             </Group>
           </Layer>
-          {activeOperation?.kind === 'perspective' && activeDoc.selectedLayer && (() => {
-            if (!canTransformRasterLayer(activeDoc, activeDoc.selectedLayer)) return null;
-            const target = activeDoc.selectedLayer.type === 'base'
-              ? activeDoc.baseLayer
-              : activeDoc.selectedLayer.type === 'ai'
-                ? activeDoc.aiLayers.find(layer => layer.id === activeDoc.selectedLayer?.id)
-                : null;
-            if (!target?.perspective) return null;
-            return (
-              <Layer x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={viewport.scale}>
-                <PerspectiveHandles
-                  quad={target.perspective}
-                  width={imgW}
-                  height={imgH}
-                  onChange={quad => {
-                    if (activeDoc.selectedLayer?.type === 'base') updateBasePerspective(quad, { history: false });
-                    else if (activeDoc.selectedLayer?.type === 'ai') updateAiLayerPerspective(activeDoc.selectedLayer.id, quad, { history: false });
-                  }}
-                />
-              </Layer>
-            );
-          })()}
+          {activeOperation?.kind === 'perspective' && (
+            <PerspectiveOverlay document={activeDoc} width={imgW} height={imgH} viewport={viewport} />
+          )}
         </Stage>
       )}
 

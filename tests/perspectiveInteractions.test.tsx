@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBaseLayerState } from '@/types';
 import type { ImageDocument, PerspectiveQuad } from '@/types';
 import { useStore } from '@/store/useStore';
-import { PerspectiveHandles } from '@/components/editor/CanvasArea';
+import { PerspectiveOverlay } from '@/components/editor/PerspectiveOverlay';
 import { TransformPanel } from '@/components/editor/panels/TransformPanel';
 
 vi.mock('react-konva', async () => {
@@ -51,7 +51,11 @@ vi.mock('react-konva', async () => {
     );
   }
 
-  return { Circle, Line: () => null };
+  return {
+    Circle,
+    Line: () => null,
+    Layer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  };
 });
 
 interface DragTarget {
@@ -95,16 +99,8 @@ function makeDocument(locked = false): ImageDocument {
 }
 
 function StorePerspectiveHarness() {
-  const quad = useStore(state => state.documents[0].baseLayer.perspective!);
-  const updateBasePerspective = useStore(state => state.updateBasePerspective);
-  return (
-    <PerspectiveHandles
-      quad={quad}
-      width={100}
-      height={100}
-      onChange={next => updateBasePerspective(next, { history: false })}
-    />
-  );
+  const document = useStore(state => state.documents[0]);
+  return <PerspectiveOverlay document={document} width={100} height={100} viewport={{ x: 0, y: 0, scale: 1 }} />;
 }
 
 describe('perspective interactions', () => {
@@ -176,5 +172,31 @@ describe('perspective interactions', () => {
     expect((screen.getByRole('button', { name: 'Обычная' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Перспектива' }) as HTMLButtonElement).disabled).toBe(true);
     expect(useStore.getState().documents[0].baseLayer.locked).toBe(true);
+  });
+
+  // Mutation caught: bypassing the shared raster guard at the canvas overlay
+  // boundary would expose draggable handles for a locked selected layer.
+  it('does not render perspective handles for a locked selected raster layer', () => {
+    useStore.setState({ documents: [makeDocument(true)], activeDocIndex: 0 });
+
+    render(<StorePerspectiveHarness />);
+
+    expect(screen.queryAllByTestId('perspective-corner')).toHaveLength(0);
+    expect(useStore.getState().documents[0].past).toHaveLength(0);
+    expect(useStore.getState().documents[0].baseLayer.locked).toBe(true);
+  });
+
+  // Mutation caught: omitting requestAnimationFrame cleanup would let a stale
+  // scheduled preview update survive after the overlay unmounts.
+  it('cancels a pending perspective frame when the handles unmount', () => {
+    const cancelFrame = vi.mocked(window.cancelAnimationFrame);
+    const view = render(<StorePerspectiveHarness />);
+    const corner = screen.getAllByTestId('perspective-corner')[0];
+    fireEvent.pointerDown(corner, { pointerId: 3 });
+    fireEvent.pointerMove(corner, { pointerId: 3, clientX: 15, clientY: 10 });
+
+    view.unmount();
+
+    expect(cancelFrame).toHaveBeenCalledWith(1);
   });
 });

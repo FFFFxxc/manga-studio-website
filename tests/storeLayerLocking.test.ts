@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createBaseLayerState } from '@/types';
 import type { ImageDocument, ShapeObject, TextObject, WatermarkObject } from '@/types';
 import { useStore } from '@/store/useStore';
+import { canTransformRasterLayer } from '@/utils/layerGuards';
 
 const validQuad = {
   topLeft: { x: 0.1, y: 0.1 },
@@ -124,5 +125,38 @@ describe('store layer locking', () => {
     unchanged = useStore.getState().documents[0];
     expect(unchanged.aiLayers[0].perspective).toBeNull();
     expect(unchanged.past).toHaveLength(0);
+  });
+
+  // Mutations caught: accepting a mismatched/missing layer reference, treating
+  // either locked raster type as transformable, or rejecting a legacy unlocked
+  // AI layer whose optional lock field is absent.
+  it('resolves transform permission from the selected raster target and lock state', () => {
+    const document = makeDocument();
+    document.baseLayer = { ...document.baseLayer, locked: false };
+    document.aiLayers = [
+      { ...document.aiLayers[0], id: 'ai-unlocked', locked: undefined },
+      { ...document.aiLayers[0], id: 'ai-locked', locked: true },
+    ];
+
+    expect(canTransformRasterLayer(document, { id: document.baseLayer.id, type: 'base' })).toBe(true);
+    expect(canTransformRasterLayer(document, { id: 'missing-base', type: 'base' })).toBe(false);
+    expect(canTransformRasterLayer(document, { id: 'ai-unlocked', type: 'ai' })).toBe(true);
+    expect(canTransformRasterLayer(document, { id: 'ai-locked', type: 'ai' })).toBe(false);
+    expect(canTransformRasterLayer(document, { id: 'missing-ai', type: 'ai' })).toBe(false);
+    expect(canTransformRasterLayer(document, { id: 'mask', type: 'mask' })).toBe(false);
+    expect(canTransformRasterLayer(document, null)).toBe(false);
+  });
+
+  // Mutation caught: manufacturing a missing AI target or history entry when
+  // the direct perspective action receives a stale layer id.
+  it('does not create a layer or history for a missing perspective target', () => {
+    const before = useStore.getState().documents[0];
+
+    useStore.getState().updateAiLayerPerspective('missing-ai', validQuad);
+
+    const after = useStore.getState().documents[0];
+    expect(after.aiLayers).toEqual(before.aiLayers);
+    expect(after.past).toHaveLength(0);
+    expect(after.hasChanges).toBe(false);
   });
 });
