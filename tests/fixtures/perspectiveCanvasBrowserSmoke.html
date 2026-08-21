@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Perspective Canvas browser smoke</title>
+  </head>
+  <body>
+    <pre id="result">Running real Canvas pixel readback…</pre>
+    <script type="module">
+      import { runPerspectiveCanvasBrowserSmoke } from './perspectiveCanvasBrowserSmoke.ts';
+
+      const result = document.querySelector('#result');
+      try {
+        const samples = runPerspectiveCanvasBrowserSmoke();
+        result.dataset.status = 'passed';
+        result.textContent = `PASS\n${JSON.stringify(samples, null, 2)}`;
+      } catch (error) {
+        result.dataset.status = 'failed';
+        result.textContent = `FAIL\n${error instanceof Error ? error.stack : String(error)}`;
+        throw error;
+      }
+    </script>
+  </body>
+</html>
