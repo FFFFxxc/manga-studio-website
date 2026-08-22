@@ -132,6 +132,7 @@ function resolveTarget(document: ImageDocument, target: RasterTarget) {
     if (targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
     if (!document.baseLayer.visible) throw new Error('Слой скрыт. Сделайте слой видимым.');
     if (document.baseLayer.locked) throw new Error('Слой заблокирован. Снимите блокировку.');
+    assertIdentityPlacement(document.baseLayer);
     return { target, layer: document.baseLayer } as const;
   }
   const layer = document.aiLayers.find(item => item.id === target.id);
@@ -139,7 +140,31 @@ function resolveTarget(document: ImageDocument, target: RasterTarget) {
   if (targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
   if (!layer.visible) throw new Error('Слой скрыт. Сделайте слой видимым.');
   if (layer.locked) throw new Error('Слой заблокирован. Снимите блокировку.');
+  assertIdentityPlacement(layer);
   return { target, layer } as const;
+}
+
+function assertIdentityPlacement(layer: {
+  x?: number;
+  y?: number;
+  scaleX?: number;
+  scaleY?: number;
+  rotation?: number;
+  crop?: unknown;
+  perspective?: unknown;
+  perspectiveSourceBounds?: unknown;
+}) {
+  const identity = (layer.x ?? 0) === 0
+    && (layer.y ?? 0) === 0
+    && (layer.scaleX ?? 1) === 1
+    && (layer.scaleY ?? 1) === 1
+    && (layer.rotation ?? 0) === 0
+    && !layer.crop
+    && !layer.perspective
+    && !layer.perspectiveSourceBounds;
+  if (!identity) {
+    throw new Error('Эффект для перемещённого или деформированного слоя пока недоступен. Сначала сбросьте трансформацию слоя.');
+  }
 }
 
 function sourceRevision(document: ImageDocument, target: RasterTarget) {
@@ -151,6 +176,17 @@ function sourceRevision(document: ImageDocument, target: RasterTarget) {
       src: document.cleanup.committed ?? document.originalSrc,
       adjustments: document.baseLayer.adjustments,
       eraseElements: document.baseLayer.eraseElements,
+      placement: {
+        x: document.baseLayer.x,
+        y: document.baseLayer.y,
+        scaleX: document.baseLayer.scaleX,
+        scaleY: document.baseLayer.scaleY,
+        rotation: document.baseLayer.rotation,
+        crop: document.baseLayer.crop,
+        perspective: document.baseLayer.perspective,
+        perspectiveSourceBounds: document.baseLayer.perspectiveSourceBounds,
+        opacity: document.baseLayer.opacity,
+      },
     });
   }
   const layer = document.aiLayers.find(item => item.id === target.id);
@@ -162,6 +198,17 @@ function sourceRevision(document: ImageDocument, target: RasterTarget) {
     src: layer.src,
     adjustments: layer.adjustments,
     eraseElements: layer.eraseElements,
+    placement: {
+      x: layer.x,
+      y: layer.y,
+      scaleX: layer.scaleX,
+      scaleY: layer.scaleY,
+      rotation: layer.rotation,
+      crop: layer.crop,
+      perspective: layer.perspective,
+      perspectiveSourceBounds: layer.perspectiveSourceBounds,
+      opacity: layer.opacity,
+    },
   });
 }
 
@@ -174,22 +221,64 @@ function effectParameters(settings: BlurSettings, seed: number, scale: number): 
     noiseAmount: intensity * 36 / 255,
     noiseMonochrome: true,
     seed,
+    coordinateScale: scale,
   };
 }
 
-function compositeEffect(
+export function blendEffectPixelData(
+  source: Uint8ClampedArray,
+  effected: Uint8ClampedArray,
+  mask: Uint8ClampedArray,
+) {
+  const result = new Uint8ClampedArray(source.length);
+  for (let index = 0; index < source.length; index += 4) {
+    const amount = (mask[index + 3] ?? 0) / 255;
+    result[index] = source[index] + (effected[index] - source[index]) * amount;
+    result[index + 1] = source[index + 1] + (effected[index + 1] - source[index + 1]) * amount;
+    result[index + 2] = source[index + 2] + (effected[index + 2] - source[index + 2]) * amount;
+    result[index + 3] = source[index + 3];
+  }
+  return result;
+}
+
+function buildReplacementPatch(
+  scaledSource: CanvasSurface,
   effected: CanvasImageSource,
-  mask: CanvasImageSource,
-  bounds: PixelRect,
+  fullMask: CanvasSurface,
+  documentBounds: PixelRect,
+  scaledBounds: PixelRect,
+  scale: number,
   factory: CanvasFactory,
 ) {
-  const patch = createSurface(factory, bounds.width, bounds.height);
-  const context = context2d(patch);
-  context.drawImage(effected, 0, 0);
-  context.globalCompositeOperation = 'destination-in';
-  context.drawImage(mask, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
-  context.globalCompositeOperation = 'source-over';
-  return patch;
+  const sourcePatch = createSurface(factory, scaledBounds.width, scaledBounds.height);
+  const sourcePatchContext = context2d(sourcePatch, true);
+  sourcePatchContext.drawImage(
+    scaledSource,
+    scaledBounds.x, scaledBounds.y, scaledBounds.width, scaledBounds.height,
+    0, 0, scaledBounds.width, scaledBounds.height,
+  );
+  const maskPatch = createSurface(factory, scaledBounds.width, scaledBounds.height);
+  const maskContext = context2d(maskPatch, true);
+  const maskX = scaledBounds.x / scale;
+  const maskY = scaledBounds.y / scale;
+  const maskWidth = scaledBounds.width / scale;
+  const maskHeight = scaledBounds.height / scale;
+  maskContext.drawImage(
+    fullMask,
+    maskX, maskY, maskWidth, maskHeight,
+    0, 0, scaledBounds.width, scaledBounds.height,
+  );
+
+  const patch = createSurface(factory, scaledBounds.width, scaledBounds.height);
+  const patchContext = context2d(patch, true);
+  const sourcePixels = sourcePatchContext.getImageData(0, 0, scaledBounds.width, scaledBounds.height);
+  const effectCanvas = copyCanvas(effected, scaledBounds.width, scaledBounds.height, factory);
+  const effectPixels = context2d(effectCanvas, true).getImageData(0, 0, scaledBounds.width, scaledBounds.height);
+  const maskPixels = maskContext.getImageData(0, 0, scaledBounds.width, scaledBounds.height);
+  const replacement = patchContext.createImageData(scaledBounds.width, scaledBounds.height);
+  replacement.data.set(blendEffectPixelData(sourcePixels.data, effectPixels.data, maskPixels.data));
+  patchContext.putImageData(replacement, 0, 0);
+  return { canvas: patch, bounds: scaledBounds, documentBounds };
 }
 
 async function canvasToDataUrl(canvas: CanvasSurface) {
@@ -227,48 +316,61 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
 
   let mask = createSurface(factory, activeDocument.width, activeDocument.height);
   let dirtyBounds: PixelRect | null = null;
+  let pendingPreviewBounds: PixelRect | null = null;
   if (settings.applyTo === 'selection') {
     const selection = await buildCleanupMask(activeDocument);
     if (selection.isEmpty) throw new Error('Сначала создайте выделение.');
     mask = copyCanvas(selection.canvas, activeDocument.width, activeDocument.height, factory);
     dirtyBounds = alphaBounds(mask);
     if (!dirtyBounds) throw new Error('Сначала создайте выделение.');
+    pendingPreviewBounds = { ...dirtyBounds };
   } else if (settings.gesture === 'area') {
     const context = context2d(mask);
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, activeDocument.width, activeDocument.height);
     dirtyBounds = { x: 0, y: 0, width: activeDocument.width, height: activeDocument.height };
+    pendingPreviewBounds = { ...dirtyBounds };
   }
 
   const builtSource = target.type === 'ai'
     ? await buildRasterLayerCanvas(resolved.layer as AiRasterLayer, activeDocument.width, activeDocument.height)
     : await buildBaseCanvas(activeDocument);
   const source = copyCanvas(builtSource, activeDocument.width, activeDocument.height, factory);
+  const latestState = useStore.getState();
+  const latestDocument = latestState.documents[latestState.activeDocIndex];
+  if (!latestDocument || latestDocument.id !== activeDocument.id) {
+    throw new Error('Активная страница изменилась. Эффект отменён.');
+  }
+  resolveTarget(latestDocument, target);
+  if (sourceRevision(latestDocument, target) !== revision) {
+    throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
+  }
   let lastPoint: [number, number] | null = null;
   let cancelled = false;
   let committedId: string | null = null;
   let commitStarted = false;
+  let previewSource: CanvasSurface | null = null;
 
-  const renderCompositeAtScale = async (scale: number) => {
-    if (!dirtyBounds) return null;
+  const renderCompositeAtScale = async (documentBounds: PixelRect, scale: number) => {
     const width = Math.max(1, Math.round(activeDocument.width * scale));
     const height = Math.max(1, Math.round(activeDocument.height * scale));
-    const bounds = scaleBounds(dirtyBounds, scale, width, height);
+    const bounds = scaleBounds(documentBounds, scale, width, height);
     if (bounds.width <= 0 || bounds.height <= 0) return null;
-    const scaledSource = copyCanvas(source, width, height, factory);
-    const scaledMask = copyCanvas(mask, width, height, factory);
+    const scaledSource = scale === 1
+      ? source
+      : previewSource ?? (previewSource = copyCanvas(source, width, height, factory));
     const effected = renderRasterEffect(
       scaledSource as HTMLCanvasElement,
       bounds,
       settings.mode as RasterEffectMode,
       effectParameters(settings, seed, scale),
     );
-    return { canvas: compositeEffect(effected, scaledMask, bounds, factory), bounds };
+    return buildReplacementPatch(scaledSource, effected, mask, documentBounds, bounds, scale, factory);
   };
 
   return {
     append(points) {
-      if (cancelled || committedId || settings.applyTo === 'selection' || settings.gesture === 'area') return;
+      if (cancelled || committedId || commitStarted || settings.applyTo === 'selection' || settings.gesture === 'area') return;
       const normalized: number[] = [];
       for (let index = 0; index + 1 < points.length; index += 2) {
         const x = points[index];
@@ -295,12 +397,15 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
         { color: '#ffffff', skipFirstStamp: Boolean(lastPoint) },
       );
       dirtyBounds = mergeBounds(dirtyBounds, next);
+      pendingPreviewBounds = mergeBounds(pendingPreviewBounds, next);
       lastPoint = [normalized[normalized.length - 2], normalized[normalized.length - 1]];
     },
 
     async renderPreview() {
-      if (cancelled || committedId) return null;
-      return renderCompositeAtScale(previewScale);
+      if (cancelled || committedId || commitStarted || !pendingPreviewBounds) return null;
+      const bounds = pendingPreviewBounds;
+      pendingPreviewBounds = null;
+      return renderCompositeAtScale(bounds, previewScale);
     },
 
     async commit() {
@@ -319,15 +424,18 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
       resolveTarget(currentDocument, target);
       if (sourceRevision(currentDocument, target) !== revision) {
         cancelled = true;
-        throw new Error('Содержимое слоя изменилось. Эффект отменён.');
+        throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
       }
 
       try {
-        const rendered = await renderCompositeAtScale(1);
+        const rendered = await renderCompositeAtScale(dirtyBounds, 1);
         if (cancelled) throw new Error('Операция отменена.');
         if (!rendered) throw new Error('Пустой штрих.');
         const output = copyCanvas(source, activeDocument.width, activeDocument.height, factory);
-        context2d(output).drawImage(rendered.canvas, rendered.bounds.x, rendered.bounds.y);
+        const replacement = context2d(rendered.canvas, true).getImageData(
+          0, 0, rendered.bounds.width, rendered.bounds.height,
+        );
+        context2d(output).putImageData(replacement, rendered.bounds.x, rendered.bounds.y);
         const src = await canvasToDataUrl(output);
         if (cancelled) throw new Error('Операция отменена.');
         const commitState = useStore.getState();
@@ -339,7 +447,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
         resolveTarget(commitDocument, target);
         if (sourceRevision(commitDocument, target) !== revision) {
           cancelled = true;
-          throw new Error('Содержимое слоя изменилось. Эффект отменён.');
+          throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
         }
 
         if (target.type === 'ai') {
@@ -347,6 +455,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
           useStore.getState().updateAiLayer(target.id, {
             src,
             adjustments: { brightness: 1, contrast: 1, saturation: 1 },
+            eraseElements: [],
           }, { history: false });
           committedId = target.id;
         } else {
@@ -356,8 +465,9 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
             name: effectLayerName(settings.mode as RasterEffectMode),
             src,
             visible: true,
-            opacity: 1,
+            opacity: activeDocument.baseLayer.opacity,
             operation: 'effect',
+            replacesBase: true,
             locked: false,
             eraseElements: [],
             crop: null,

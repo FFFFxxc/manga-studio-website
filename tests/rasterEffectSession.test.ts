@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiRasterLayer, BlurSettings, ImageDocument } from '@/types';
 import { useStore } from '@/store/useStore';
 import { makeEditorDocument } from '@/tests/helpers/makeEditorDocument';
-import { createRasterEffectSession } from '@/utils/rasterEffectSession';
+import { blendEffectPixelData, createRasterEffectSession } from '@/utils/rasterEffectSession';
 import { applyRasterEffectPreview } from '@/utils/rasterEffects';
 
 const rasterMocks = vi.hoisted(() => ({
@@ -78,6 +78,23 @@ class SessionContext {
       }
     }
     return { data, width, height, colorSpace: 'srgb' } as ImageData;
+  }
+
+  createImageData(width: number, height: number) {
+    return {
+      data: new Uint8ClampedArray(width * height * 4),
+      width,
+      height,
+      colorSpace: 'srgb',
+    } as ImageData;
+  }
+
+  putImageData(image: ImageData, x: number, y: number) {
+    let hasAlpha = false;
+    for (let index = 3; index < image.data.length; index += 4) {
+      if (image.data[index] > 0) { hasAlpha = true; break; }
+    }
+    if (hasAlpha) this.canvas.alphaBounds = { x, y, width: image.width, height: image.height };
   }
 }
 
@@ -189,6 +206,16 @@ describe('raster effect stroke session', () => {
     expect(preview?.bounds).toEqual({ x: 5, y: 6, width: 10, height: 12 });
   });
 
+  it('replaces RGB through the soft mask without increasing source alpha', () => {
+    const result = blendEffectPixelData(
+      new Uint8ClampedArray([20, 40, 60, 80]),
+      new Uint8ClampedArray([220, 140, 100, 80]),
+      new Uint8ClampedArray([255, 255, 255, 128]),
+    );
+
+    expect([...result]).toEqual([120, 90, 80, 80]);
+  });
+
   it('snapshots settings and reuses one seed for preview and commit', async () => {
     const mutableSettings = { ...settings };
     const session = await createRasterEffectSession(makeOptions({ settings: mutableSettings }));
@@ -206,6 +233,31 @@ describe('raster effect stroke session', () => {
     expect(previewCall[2]).toBe('blur');
     expect(commitCall[2]).toBe('blur');
     expect(previewCall[3].seed).toBe(commitCall[3].seed);
+    expect(previewCall[3].coordinateScale).toBe(0.5);
+    expect(commitCall[3].coordinateScale).toBe(1);
+  });
+
+  it('renders only newly dirty preview bounds and reuses the scaled source', async () => {
+    rasterMocks.drawBrushStroke
+      .mockImplementationOnce((context: SessionContext) => {
+        context.canvas.alphaBounds = { x: 10, y: 12, width: 20, height: 24 };
+        return { x: 10, y: 12, width: 20, height: 24 };
+      })
+      .mockImplementationOnce((context: SessionContext) => {
+        context.canvas.alphaBounds = { x: 70, y: 60, width: 10, height: 10 };
+        return { x: 70, y: 60, width: 10, height: 10 };
+      });
+    const session = await createRasterEffectSession(makeOptions());
+
+    session.append([0.1, 0.2, 0.3, 0.4]);
+    const first = await session.renderPreview();
+    session.append([0.7, 0.7, 0.8, 0.8]);
+    const second = await session.renderPreview();
+
+    expect(first?.bounds).toEqual({ x: 5, y: 6, width: 10, height: 12 });
+    expect(second?.bounds).toEqual({ x: 35, y: 30, width: 5, height: 5 });
+    expect(rasterMocks.renderRasterEffect.mock.calls[0][0])
+      .toBe(rasterMocks.renderRasterEffect.mock.calls[1][0]);
   });
 
   it('commits a drawing layer with one history entry and preserves its operation', async () => {
@@ -220,6 +272,22 @@ describe('raster effect stroke session', () => {
     expect(document.aiLayers).toHaveLength(1);
     expect(document.aiLayers[0].operation).toBe('drawing');
     expect(document.aiLayers[0].src).toBe('data:image/png;base64,session-100x80');
+  });
+
+  it('rebases erase elements already baked into the committed AI source', async () => {
+    const erased = drawingLayer({
+      eraseElements: [{ type: 'polygon', points: [0, 0, 1, 0, 1, 1], mode: 'add' }],
+    });
+    useStore.setState({
+      documents: [documentWithDrawing({ aiLayers: [erased] })],
+      activeDocIndex: 0,
+    });
+    const session = await createRasterEffectSession(makeOptions());
+    session.append([0.1, 0.2, 0.3, 0.4]);
+
+    await session.commit();
+
+    expect(useStore.getState().documents[0].aiLayers[0].eraseElements).toEqual([]);
   });
 
   it('cancels without history and refuses a later commit', async () => {
@@ -265,7 +333,10 @@ describe('raster effect stroke session', () => {
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
     const updated = useStore.getState().documents[0];
     expect(updated.past).toHaveLength(1);
-    expect(updated.aiLayers.filter(layer => layer.operation === 'effect')).toHaveLength(1);
+    const effects = updated.aiLayers.filter(layer => layer.operation === 'effect');
+    expect(effects).toHaveLength(1);
+    expect(effects[0].replacesBase).toBe(true);
+    expect(effects[0].opacity).toBe(updated.baseLayer.opacity);
   });
 
   it('rejects a locked target before building source pixels', async () => {
@@ -285,6 +356,31 @@ describe('raster effect stroke session', () => {
 
     useStore.setState({ documents: [documentWithDrawing()], activeDocIndex: 0 });
     await expect(createRasterEffectSession(makeOptions({ layer: { type: 'ai', id: 'missing' } }))).rejects.toThrow('Слой не найден');
+    expect(rasterMocks.buildRasterLayerCanvas).not.toHaveBeenCalled();
+  });
+
+  it('rejects transformed and perspective targets before building source pixels', async () => {
+    useStore.setState({
+      documents: [documentWithDrawing({ aiLayers: [drawingLayer({ x: 0.1 })] })],
+      activeDocIndex: 0,
+    });
+    await expect(createRasterEffectSession(makeOptions())).rejects.toThrow('деформированного слоя');
+    expect(rasterMocks.buildRasterLayerCanvas).not.toHaveBeenCalled();
+
+    useStore.setState({
+      documents: [documentWithDrawing({
+        aiLayers: [drawingLayer({
+          perspective: {
+            topLeft: { x: 0.1, y: 0.1 },
+            topRight: { x: 0.9, y: 0.1 },
+            bottomRight: { x: 0.9, y: 0.9 },
+            bottomLeft: { x: 0.1, y: 0.9 },
+          },
+        })],
+      })],
+      activeDocIndex: 0,
+    });
+    await expect(createRasterEffectSession(makeOptions())).rejects.toThrow('деформированного слоя');
     expect(rasterMocks.buildRasterLayerCanvas).not.toHaveBeenCalled();
   });
 
@@ -331,7 +427,19 @@ describe('raster effect stroke session', () => {
       documents: [{ ...current, aiLayers: current.aiLayers.map(layer => ({ ...layer, src: 'data:image/png;base64,newer' })) }],
     });
 
-    await expect(session.commit()).rejects.toThrow('Содержимое слоя изменилось');
+    await expect(session.commit()).rejects.toThrow('Содержимое или геометрия слоя изменились');
+    expect(useStore.getState().documents[0].past).toHaveLength(0);
+  });
+
+  it('rejects commit after target geometry changes', async () => {
+    const session = await createRasterEffectSession(makeOptions());
+    session.append([0.1, 0.2, 0.3, 0.4]);
+    const current = useStore.getState().documents[0];
+    useStore.setState({
+      documents: [{ ...current, aiLayers: current.aiLayers.map(layer => ({ ...layer, rotation: 12 })) }],
+    });
+
+    await expect(session.commit()).rejects.toThrow('деформированного слоя');
     expect(useStore.getState().documents[0].past).toHaveLength(0);
   });
 

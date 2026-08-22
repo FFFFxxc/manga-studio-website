@@ -267,6 +267,25 @@ describe('raster effect primitives', () => {
     }
   });
 
+  it('uses document coordinates for noise in a downscaled preview', () => {
+    const fullSource = makeCanvas(8, 8, () => [128, 128, 128, 170]);
+    const previewSource = makeCanvas(4, 4, () => [128, 128, 128, 170]);
+    const full = renderRasterEffect(
+      fullSource as unknown as HTMLCanvasElement,
+      { x: 0, y: 0, width: 8, height: 8 },
+      'noise',
+      { ...parameters, coordinateScale: 1 },
+    ) as unknown as PixelCanvas;
+    const preview = renderRasterEffect(
+      previewSource as unknown as HTMLCanvasElement,
+      { x: 0, y: 0, width: 4, height: 4 },
+      'noise',
+      { ...parameters, coordinateScale: 0.5 },
+    ) as unknown as PixelCanvas;
+
+    expect(preview.getPixel(2, 1)).toEqual(full.getPixel(4, 2));
+  });
+
   it('sharpens an edge without changing alpha', () => {
     const source = makeCanvas(8, 8, (x, y) => [x < 4 ? 32 : 224, x < 4 ? 32 : 224, x < 4 ? 32 : 224, 60 + x * 12 + y]);
     const result = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 0, y: 0, width: 8, height: 8 }, 'sharpen', parameters) as unknown as PixelCanvas;

@@ -155,11 +155,12 @@ function renderNoise(source: HTMLCanvasElement, bounds: RasterEffectBounds, para
   const result = context.createImageData(source.width, source.height);
   result.data.set(pixels.data);
   const amount = clamp(finiteOr(parameters.noiseAmount, 0), 0, 1) * 255;
+  const coordinateScale = Math.max(Number.EPSILON, finiteOr(parameters.coordinateScale ?? 1, 1));
   for (let y = 0; y < source.height; y += 1) {
     for (let x = 0; x < source.width; x += 1) {
       const index = (y * source.width + x) * 4;
-      const absoluteX = bounds.x + x;
-      const absoluteY = bounds.y + y;
+      const absoluteX = Math.floor((bounds.x + x) / coordinateScale);
+      const absoluteY = Math.floor((bounds.y + y) / coordinateScale);
       if (parameters.noiseMonochrome) {
         const noise = (coordinateRandom(parameters.seed, absoluteX, absoluteY, 0) * 2 - 1) * amount;
         result.data[index] += noise;

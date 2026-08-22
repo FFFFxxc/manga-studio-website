@@ -504,6 +504,8 @@ export interface RasterEffectParameters {
   noiseAmount: number;
   noiseMonochrome: boolean;
   seed: number;
+  /** Preview pixels per document pixel; keeps coordinate-seeded noise stable across scales. */
+  coordinateScale?: number;
 }
 
 export interface TranslationMaskSettings {
