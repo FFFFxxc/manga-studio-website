@@ -56,12 +56,14 @@ interface PendingImageImport {
 }
 
 interface PendingTextDraft {
+  documentId: string;
   id: string;
   object: TextObject;
   original?: TextObject;
 }
 
 interface TextPointerGesture {
+  documentId: string;
   pointerId: number;
   start: { x: number; y: number };
   end: { x: number; y: number };
@@ -1451,6 +1453,12 @@ export function CanvasArea() {
 
   const commitTextDraft = (value: string) => {
     if (!pendingTextDraft) return;
+    const store = useStore.getState();
+    const currentDocument = store.documents[store.activeDocIndex];
+    if (currentDocument?.id !== pendingTextDraft.documentId) {
+      cancelTextDraft();
+      return;
+    }
     if (value.trim().length === 0) {
       cancelTextDraft();
       return;
@@ -1485,6 +1493,10 @@ export function CanvasArea() {
   const queueTextGeometry = (end: { x: number; y: number }) => {
     const gesture = textPointerGestureRef.current;
     if (!gesture || !activeDoc) return;
+    if (gesture.documentId !== activeDoc.id) {
+      clearTextGeometryDraft();
+      return;
+    }
     gesture.end = end;
     if (textDraftFrameRef.current !== null) return;
     textDraftFrameRef.current = window.requestAnimationFrame(() => {
@@ -1498,6 +1510,10 @@ export function CanvasArea() {
   const finishTextGeometryDraft = (event?: PointerEvent) => {
     const gesture = textPointerGestureRef.current;
     if (!gesture || !activeDoc) return false;
+    if (gesture.documentId !== activeDoc.id) {
+      clearTextGeometryDraft();
+      return false;
+    }
     const end = event ? nativeTextPoint(event) ?? gesture.end : gesture.end;
     const rect = createTextDraftRect(gesture.start, end, activeDoc, 5);
     clearTextGeometryDraft();
@@ -1530,7 +1546,7 @@ export function CanvasArea() {
       rotation: 0,
       visible: true,
     };
-    setPendingTextDraft({ id, object });
+    setPendingTextDraft({ documentId: gesture.documentId, id, object });
     isNewTextRef.current = true;
     setInlineEditingTextId(id);
     return true;
@@ -1547,6 +1563,16 @@ export function CanvasArea() {
   }, [inlineEditingTextId, pendingTextDraft]);
 
   useEffect(() => {
+    const activeDocumentId = activeDoc?.id;
+    const gestureDocumentId = textPointerGestureRef.current?.documentId;
+    const editorDocumentId = pendingTextDraft?.documentId;
+    if ((gestureDocumentId && gestureDocumentId !== activeDocumentId)
+      || (editorDocumentId && editorDocumentId !== activeDocumentId)) {
+      clearTextDraftState();
+    }
+  }, [activeDoc?.id, pendingTextDraft?.documentId]);
+
+  useEffect(() => {
     const editor = textEditorHostRef.current?.querySelector('textarea');
     if (!editor || !pendingTextDraft) return;
     editor.dataset.textMode = pendingTextDraft.object.textMode ?? 'point';
@@ -1559,6 +1585,7 @@ export function CanvasArea() {
       panVpStart.current = { x: viewport.x, y: viewport.y };
       return;
     }
+    if (activeTool === 'text' && textPointerGestureRef.current) return;
     if (activeTool === 'text' && activeDoc && e.evt.button === 0 && e.target.getClassName() !== 'Text') {
       const stage = stageRef.current;
       const position = stage?.getPointerPosition();
@@ -1567,7 +1594,7 @@ export function CanvasArea() {
       if (pendingTextDraft) clearTextDraftState();
 
       const start = { x: imagePoint.x * activeDoc.width, y: imagePoint.y * activeDoc.height };
-      textPointerGestureRef.current = { pointerId: e.evt.pointerId, start, end: start };
+      textPointerGestureRef.current = { documentId: activeDoc.id, pointerId: e.evt.pointerId, start, end: start };
       setTextDraftRect(createTextDraftRect(start, start, activeDoc, 5));
       try {
         const target = e.evt.target as HTMLElement;
@@ -1754,9 +1781,12 @@ export function CanvasArea() {
       return;
     }
 
-    if (textPointerGestureRef.current) {
-      const point = nativeTextPoint(e.evt);
-      if (point) queueTextGeometry(point);
+    const textGesture = textPointerGestureRef.current;
+    if (textGesture) {
+      if (textGesture.pointerId === e.evt.pointerId) {
+        const point = nativeTextPoint(e.evt);
+        if (point) queueTextGeometry(point);
+      }
       return;
     }
 
@@ -1857,8 +1887,9 @@ export function CanvasArea() {
 
   const handleMouseUp = (e?: Konva.KonvaEventObject<PointerEvent>) => {
     isPanning.current = false;
-    if (textPointerGestureRef.current) {
-      finishTextGeometryDraft(e?.evt);
+    const textGesture = textPointerGestureRef.current;
+    if (textGesture) {
+      if (e && textGesture.pointerId === e.evt.pointerId) finishTextGeometryDraft(e.evt);
       return;
     }
     if (isEffectPainting.current) {
@@ -1974,8 +2005,9 @@ export function CanvasArea() {
   };
 
   const handlePointerCancel = (event: Konva.KonvaEventObject<PointerEvent>) => {
-    if (textPointerGestureRef.current?.pointerId === event.evt.pointerId) {
-      clearTextGeometryDraft();
+    const textGesture = textPointerGestureRef.current;
+    if (textGesture) {
+      if (textGesture.pointerId === event.evt.pointerId) clearTextGeometryDraft();
       return;
     }
     handleMouseUp(event);
@@ -2611,7 +2643,7 @@ export function CanvasArea() {
                     onEditRequest={() => {
                       if (activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'rectSelect' || activeTool === 'wand') return;
                       setSelectedObject({ id: txt.id, type: 'text' });
-                      setPendingTextDraft({ id: txt.id, object: { ...txt }, original: { ...txt } });
+                      setPendingTextDraft({ documentId: activeDoc.id, id: txt.id, object: { ...txt }, original: { ...txt } });
                       isNewTextRef.current = false;
                       setInlineEditingTextId(txt.id);
                     }}

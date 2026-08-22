@@ -158,8 +158,14 @@ function pointText(overrides: Partial<TextObject> = {}): TextObject {
 }
 
 function seedEditor(texts: TextObject[] = []) {
+  seedDocuments([
+    makeEditorDocument({ texts, layerOrder: texts.map(text => ({ type: 'text' as const, id: text.id })) }),
+  ]);
+}
+
+function seedDocuments(documents: ReturnType<typeof makeEditorDocument>[]) {
   useStore.setState({
-    documents: [makeEditorDocument({ texts, layerOrder: texts.map(text => ({ type: 'text' as const, id: text.id })) })],
+    documents,
     activeDocIndex: 0,
     activeTool: 'text',
     selectedObject: null,
@@ -325,5 +331,110 @@ describe('text creation drafts', () => {
     expect(screen.queryByTestId('text-draft-overlay')).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(useStore.getState().documents[0].past).toHaveLength(0);
+  });
+
+  it('cancels a new draft when the active document changes', () => {
+    seedDocuments([
+      makeEditorDocument({ id: 'doc-origin', name: 'origin.png' }),
+      makeEditorDocument({ id: 'doc-other', name: 'other.png' }),
+    ]);
+    render(<CanvasArea />);
+    clickCanvas(screen.getByTestId('canvas-stage'), { x: 240, y: 180 });
+    expect(screen.getByRole('textbox')).toBeTruthy();
+
+    act(() => useStore.getState().setActiveDoc(1));
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    const state = useStore.getState();
+    expect(state.documents[0].texts).toHaveLength(0);
+    expect(state.documents[1].texts).toHaveLength(0);
+    expect(state.documents[0].past).toHaveLength(0);
+    expect(state.documents[1].past).toHaveLength(0);
+  });
+
+  it('cancels in-progress text geometry when the active document changes', () => {
+    seedDocuments([
+      makeEditorDocument({ id: 'doc-origin', name: 'origin.png' }),
+      makeEditorDocument({ id: 'doc-other', name: 'other.png' }),
+    ]);
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 15, clientX: 200, clientY: 160 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 15, clientX: 500, clientY: 320 });
+    expect(screen.getByTestId('text-draft-overlay')).toBeTruthy();
+
+    act(() => useStore.getState().setActiveDoc(1));
+    expect(screen.queryByTestId('text-draft-overlay')).toBeNull();
+    fireEvent.pointerUp(window, { button: 0, pointerId: 15, clientX: 500, clientY: 320 });
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    const state = useStore.getState();
+    expect(state.documents[0].texts).toHaveLength(0);
+    expect(state.documents[1].texts).toHaveLength(0);
+    expect(state.documents[0].past).toHaveLength(0);
+    expect(state.documents[1].past).toHaveLength(0);
+  });
+
+  it('cancels an existing edit on document change without touching either page', () => {
+    const original = pointText({ id: 'origin-text' });
+    seedDocuments([
+      makeEditorDocument({
+        id: 'doc-origin',
+        name: 'origin.png',
+        texts: [original],
+        layerOrder: [{ type: 'text', id: original.id }],
+      }),
+      makeEditorDocument({ id: 'doc-other', name: 'other.png' }),
+    ]);
+    render(<CanvasArea />);
+    fireEvent.doubleClick(screen.getByTestId('konva-text'));
+    const editor = screen.getByRole('textbox');
+    fireEvent.change(editor, { target: { value: 'Must not move pages' } });
+
+    act(() => useStore.getState().setActiveDoc(1));
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' });
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    const state = useStore.getState();
+    expect(state.documents[0].texts[0].text).toBe('Original');
+    expect(state.documents[1].texts).toHaveLength(0);
+    expect(state.documents[0].past).toHaveLength(0);
+    expect(state.documents[1].past).toHaveLength(0);
+  });
+
+  it('does not let a second pointer replace or finish the active text gesture', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 21, clientX: 200, clientY: 160 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 21, clientX: 320, clientY: 240 });
+    const initialWidth = screen.getByTestId('text-draft-overlay').style.width;
+
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 22, clientX: 600, clientY: 400 });
+    expect(screen.getByTestId('text-draft-overlay').style.width).toBe(initialWidth);
+    fireEvent.pointerUp(stage, { button: 0, pointerId: 22, clientX: 700, clientY: 500 });
+
+    expect(screen.getByTestId('text-draft-overlay')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    fireEvent.pointerUp(stage, { button: 0, pointerId: 21, clientX: 320, clientY: 240 });
+    expect(screen.getByRole('textbox').getAttribute('data-text-mode')).toBe('paragraph');
+  });
+
+  it('ignores mismatched pointer move, cancel and up events', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 31, clientX: 200, clientY: 160 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 31, clientX: 320, clientY: 240 });
+    const initialWidth = screen.getByTestId('text-draft-overlay').style.width;
+
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 32, clientX: 700, clientY: 500 });
+    expect(screen.getByTestId('text-draft-overlay').style.width).toBe(initialWidth);
+    fireEvent.pointerCancel(stage, { pointerId: 32, clientX: 700, clientY: 500 });
+    expect(screen.getByTestId('text-draft-overlay')).toBeTruthy();
+    fireEvent.pointerUp(stage, { button: 0, pointerId: 32, clientX: 700, clientY: 500 });
+    expect(screen.getByTestId('text-draft-overlay')).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+
+    fireEvent.pointerUp(stage, { button: 0, pointerId: 31, clientX: 320, clientY: 240 });
+    expect(screen.getByRole('textbox').getAttribute('data-text-mode')).toBe('paragraph');
   });
 });
