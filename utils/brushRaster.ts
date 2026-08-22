@@ -1,4 +1,5 @@
 import type { StrokeData } from '@/types';
+import { getBrushSpacingPx, getBrushTipRadii } from '@/utils/brushTip';
 
 const stampCache = new Map<string, HTMLCanvasElement>();
 
@@ -13,15 +14,15 @@ function getBrushStamp(diameter: number, hardness: number, color: string) {
   canvas.height = size + 4;
   const ctx = canvas.getContext('2d')!;
   const center = canvas.width / 2;
-  const radius = size / 2;
+  const { outer, hard } = getBrushTipRadii(diameter, normalizedHardness);
   if (normalizedHardness >= 0.995) {
     ctx.fillStyle = 'rgba(255,255,255,1)';
     ctx.beginPath();
-    ctx.arc(center, center, radius, 0, Math.PI * 2);
+    ctx.arc(center, center, outer, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    const gradient = ctx.createRadialGradient(center, center, 0, center, center, radius);
-    const solidStop = Math.max(0, Math.min(0.98, normalizedHardness));
+    const gradient = ctx.createRadialGradient(center, center, 0, center, center, outer);
+    const solidStop = Math.max(0, Math.min(0.98, hard / outer));
     gradient.addColorStop(0, 'rgba(255,255,255,1)');
     gradient.addColorStop(solidStop, 'rgba(255,255,255,1)');
     gradient.addColorStop(1, 'rgba(255,255,255,0)');
@@ -50,7 +51,7 @@ export function drawBrushStroke(
   const hardness = stroke.hardness ?? 1;
   const color = options.color ?? stroke.color;
   const stamp = getBrushStamp(diameter, hardness, color);
-  const spacing = Math.max(0.75, diameter * Math.max(0.06, 0.18 - hardness * 0.08));
+  const spacing = getBrushSpacingPx(diameter, hardness);
   const points: Array<{ x: number; y: number }> = [];
   for (let index = 0; index < stroke.points.length; index += 2) {
     points.push({ x: stroke.points[index] * width, y: stroke.points[index + 1] * height });

@@ -1,8 +1,254 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import React, { forwardRef, useImperativeHandle, useRef } from 'react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BrushCursor } from '@/components/editor/BrushCursor';
 import { PaintEditor } from '@/components/editor/panels/PaintEditor';
 
+const stageHarness = vi.hoisted(() => ({
+  setPointerCapture: vi.fn(),
+  releasePointerCapture: vi.fn(),
+}));
+
+vi.mock('react-konva', () => {
+  interface KonvaProps {
+    children?: React.ReactNode;
+    width?: number;
+    height?: number;
+    onPointerDown?: (event: unknown) => void;
+    onPointerMove?: (event: unknown) => void;
+    onPointerUp?: (event: unknown) => void;
+    onPointerCancel?: (event: unknown) => void;
+  }
+
+  const layer = { batchDraw: vi.fn() };
+  const primitiveNode = {
+    nodes: vi.fn(),
+    getLayer: () => layer,
+    setAttrs: vi.fn(),
+    points: vi.fn(),
+    visible: vi.fn(),
+    stroke: vi.fn(),
+    opacity: vi.fn(),
+    globalCompositeOperation: vi.fn(),
+    strokeWidth: vi.fn(),
+    shadowColor: vi.fn(),
+    shadowBlur: vi.fn(),
+    shadowOpacity: vi.fn(),
+    getClassName: () => 'Group',
+    name: () => '',
+    x: () => 0,
+    y: () => 0,
+    scaleX: () => 1,
+    scaleY: () => 1,
+    rotation: () => 0,
+  };
+
+  const Primitive = forwardRef<unknown, KonvaProps>(function Primitive({ children }, ref) {
+    useImperativeHandle(ref, () => primitiveNode);
+    return <div>{children}</div>;
+  });
+
+  const Stage = forwardRef<unknown, KonvaProps>(function Stage(props, ref) {
+    const elementRef = useRef<HTMLDivElement>(null);
+    const pointer = useRef({ x: 0, y: 0 });
+    const node = useRef({
+      getPointerPosition: () => pointer.current,
+      container: () => elementRef.current,
+      width: () => props.width ?? 800,
+      height: () => props.height ?? 600,
+      getClassName: () => 'Stage',
+      name: () => '',
+      toDataURL: () => 'data:image/png;base64,',
+    });
+    useImperativeHandle(ref, () => node.current);
+
+    const remember = (event: React.PointerEvent<HTMLDivElement>) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+    };
+    const eventFor = (event: React.PointerEvent<HTMLDivElement>) => ({
+      evt: event.nativeEvent,
+      target: node.current,
+    });
+
+    return (
+      <div
+        ref={element => {
+          elementRef.current = element;
+          if (!element) return;
+          Object.defineProperty(element, 'setPointerCapture', { configurable: true, value: stageHarness.setPointerCapture });
+          Object.defineProperty(element, 'releasePointerCapture', { configurable: true, value: stageHarness.releasePointerCapture });
+          element.getBoundingClientRect = () => ({
+            x: 0, y: 0, left: 0, top: 0,
+            right: props.width ?? 800, bottom: props.height ?? 600,
+            width: props.width ?? 800, height: props.height ?? 600,
+            toJSON: () => ({}),
+          });
+        }}
+        data-testid="paint-canvas-stage"
+        onPointerDown={event => { remember(event); props.onPointerDown?.(eventFor(event)); }}
+        onPointerMove={event => { remember(event); props.onPointerMove?.(eventFor(event)); }}
+        onPointerUp={event => { remember(event); props.onPointerUp?.(eventFor(event)); }}
+        onPointerCancel={event => { remember(event); props.onPointerCancel?.(eventFor(event)); }}
+      >
+        {props.children}
+      </div>
+    );
+  });
+
+  return {
+    Stage,
+    Layer: Primitive,
+    Image: Primitive,
+    Line: Primitive,
+    Text: Primitive,
+    Transformer: Primitive,
+    Group: Primitive,
+    Rect: Primitive,
+    Circle: Primitive,
+    Ellipse: Primitive,
+  };
+});
+
+import { CanvasArea } from '@/components/editor/CanvasArea';
+import { useStore } from '@/store/useStore';
+import { makeEditorDocument } from '@/tests/helpers/makeEditorDocument';
+
 const solid = { type: 'solid' as const, color: '#ffffff' };
+
+describe('BrushCursor', () => {
+  afterEach(() => cleanup());
+
+  // Mutations caught: a single-ring cursor hides hardness from the user and
+  // can no longer predict the alpha footprint produced by brush stamps.
+  it('shows the outer diameter, hard core, color and optional crosshair', () => {
+    render(<BrushCursor diameterPx={100} hardness={0.5} color="#ff8000" showCrosshair />);
+
+    const cursor = screen.getByTestId('brush-cursor');
+    expect(cursor.style.width).toBe('100px');
+    expect(cursor.style.height).toBe('100px');
+    expect(screen.getByTestId('brush-cursor-outer').style.borderColor).toBe('rgb(255, 128, 0)');
+    expect(screen.getByTestId('brush-cursor-hard-core').style.width).toBe('50px');
+    expect(screen.getByTestId('brush-cursor-hard-core').style.height).toBe('50px');
+    expect(screen.getByTestId('brush-cursor-crosshair')).toBeTruthy();
+  });
+
+  it('omits a zero-sized hard core and optional crosshair', () => {
+    render(<BrushCursor diameterPx={40} hardness={0} color="#ffffff" showCrosshair={false} />);
+
+    expect(screen.queryByTestId('brush-cursor-hard-core')).toBeNull();
+    expect(screen.queryByTestId('brush-cursor-crosshair')).toBeNull();
+  });
+});
+
+class TestResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+describe('CanvasArea brush preview', () => {
+  const contexts = new Map<HTMLCanvasElement, {
+    clearRect: ReturnType<typeof vi.fn>;
+    drawImage: ReturnType<typeof vi.fn>;
+  }>();
+  let animationFrames: FrameRequestCallback[];
+
+  beforeEach(() => {
+    stageHarness.setPointerCapture.mockReset();
+    stageHarness.releasePointerCapture.mockReset();
+    contexts.clear();
+    animationFrames = [];
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function getContext(this: HTMLCanvasElement) {
+      const existing = contexts.get(this);
+      if (existing) return existing as unknown as CanvasRenderingContext2D;
+      const radialGradient = { addColorStop: vi.fn() };
+      const context = {
+        fillStyle: '',
+        strokeStyle: '',
+        globalAlpha: 1,
+        globalCompositeOperation: 'source-over',
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+        createRadialGradient: vi.fn(() => radialGradient),
+        beginPath: vi.fn(),
+        arc: vi.fn(),
+        fill: vi.fn(),
+        drawImage: vi.fn(),
+        save: vi.fn(),
+        restore: vi.fn(),
+      };
+      contexts.set(this, context);
+      return context as unknown as CanvasRenderingContext2D;
+    });
+    const document = makeEditorDocument({ width: 1000, height: 1000 });
+    useStore.setState({
+      documents: [document],
+      activeDocIndex: 0,
+      activeTool: 'brush',
+      viewport: { x: 0, y: 0, scale: 1 },
+      cleanupSettings: {
+        ...useStore.getState().cleanupSettings,
+        brushSize: 0.1,
+        brushHardness: 0.5,
+        brushOpacity: 0.6,
+        brushColor: '#ff8000',
+      },
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  // Mutations caught: restoring the Konva shadow line, flushing directly on
+  // pointermove, or calling a store setter during preview breaks this contract.
+  it('renders coalesced points into one raster preview frame without mutating the document', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('paint-canvas-stage');
+    const overlay = screen.getByTestId('brush-preview-overlay') as HTMLCanvasElement;
+    const before = useStore.getState().documents[0];
+
+    fireEvent.pointerDown(stage, { pointerId: 7, button: 0, clientX: 400, clientY: 300 });
+    expect(stageHarness.setPointerCapture).toHaveBeenCalledWith(7);
+
+    const move = new MouseEvent('pointermove', { bubbles: true, clientX: 456, clientY: 300 });
+    Object.defineProperty(move, 'pointerId', { value: 7 });
+    Object.defineProperty(move, 'getCoalescedEvents', {
+      value: () => [
+        { clientX: 428, clientY: 300 },
+        { clientX: 456, clientY: 300 },
+      ],
+    });
+    stage.dispatchEvent(move);
+
+    expect(animationFrames).toHaveLength(1);
+    expect(useStore.getState().documents[0]).toBe(before);
+    expect(contexts.has(overlay)).toBe(false);
+
+    act(() => animationFrames.shift()?.(0));
+
+    expect(contexts.get(overlay)?.clearRect).toHaveBeenCalledTimes(1);
+    expect(contexts.get(overlay)?.drawImage).toHaveBeenCalledTimes(1);
+    expect(overlay.dataset.hasPreview).toBe('true');
+    expect(useStore.getState().documents[0]).toBe(before);
+
+    fireEvent.pointerUp(window, { pointerId: 7 });
+    const overlayAfterCommit = screen.getByTestId('brush-preview-overlay') as HTMLCanvasElement;
+    expect(stageHarness.releasePointerCapture).toHaveBeenCalledWith(7);
+    expect(useStore.getState().documents[0].cleanup.strokes[0].points).toHaveLength(6);
+    expect(overlayAfterCommit).toBe(overlay);
+    expect(overlayAfterCommit.dataset.hasPreview).toBe('false');
+    expect(contexts.get(overlayAfterCommit)?.clearRect).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('PaintEditor', () => {
   beforeEach(() => {

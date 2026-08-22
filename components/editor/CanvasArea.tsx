@@ -52,6 +52,8 @@ import { PerspectiveOverlay } from './PerspectiveOverlay';
 import { TextDraftOverlay } from './TextDraftOverlay';
 import { createTextDraftRect, normalizeParagraphTransform, type TextDraftRect } from '@/utils/textBox';
 import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
+import { BrushCursor } from './BrushCursor';
+import { getBrushTipRadii } from '@/utils/brushTip';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -1215,6 +1217,7 @@ export function CanvasArea() {
   const isNewTextRef = useRef(false);
   // Brush cursor updated imperatively via DOM
   const cursorRef = useRef<HTMLDivElement>(null);
+  const brushPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
@@ -1321,6 +1324,13 @@ export function CanvasArea() {
     if (line) { line.points([]); line.visible(false); line.getLayer()?.batchDraw(); }
   }, []);
 
+  const clearBrushPreview = () => {
+    const canvas = brushPreviewCanvasRef.current;
+    if (!canvas || canvas.dataset.hasPreview !== 'true') return;
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    canvas.dataset.hasPreview = 'false';
+  };
+
   const finishPolyLasso = useCallback((mode: 'replace' | 'add' | 'subtract') => {
     const points = [...polyLassoPoints.current];
     cancelPolyLasso();
@@ -1352,6 +1362,7 @@ export function CanvasArea() {
     liveLineRef.current?.setAttrs({ points: [], visible: false });
     liveLassoRef.current?.setAttrs({ points: [], visible: false });
     liveRectRef.current?.setAttrs({ visible: false });
+    clearBrushPreview();
     liveLineRef.current?.getLayer()?.batchDraw();
     liveLassoRef.current?.getLayer()?.batchDraw();
   }, [activeTool]);
@@ -1371,6 +1382,7 @@ export function CanvasArea() {
       liveLineRef.current?.setAttrs({ points: [], visible: false });
       liveLassoRef.current?.setAttrs({ points: [], visible: false });
       liveRectRef.current?.setAttrs({ visible: false });
+      clearBrushPreview();
       liveLineRef.current?.getLayer()?.batchDraw();
       liveLassoRef.current?.getLayer()?.batchDraw();
     };
@@ -1379,6 +1391,7 @@ export function CanvasArea() {
   }, [cancelPolyLasso]);
   useEffect(() => {
     cancelPolyLasso();
+    clearBrushPreview();
   }, [activeDocIndex, cancelPolyLasso]);
 
   // Fit to screen
@@ -1424,12 +1437,11 @@ export function CanvasArea() {
       const docH = doc?.height ?? 1000;
       const ps = doc ? Math.min(1, 1800 / Math.max(doc.width, doc.height)) : 1;
       const size = tool === 'blur' ? store.blurSettings.brushSize : store.cleanupSettings.brushSize;
-      const rad = (size * docH * ps * vp.scale) / 2;
-      const d = rad * 2;
+      const hardness = tool === 'blur' ? store.blurSettings.hardness : store.cleanupSettings.brushHardness;
+      const diameter = size * docH * ps * vp.scale;
+      const { outer } = getBrushTipRadii(diameter, hardness);
       cursor.style.display = 'block';
-      cursor.style.width = `${d}px`;
-      cursor.style.height = `${d}px`;
-      cursor.style.transform = `translate3d(${posX - rad}px, ${posY - rad}px, 0)`;
+      cursor.style.transform = `translate3d(${posX - outer}px, ${posY - outer}px, 0)`;
     };
     const leave = () => { if (cursorRef.current) cursorRef.current.style.display = 'none'; };
     container.addEventListener('pointermove', handler, { passive: true });
@@ -1477,6 +1489,28 @@ export function CanvasArea() {
       livePoints.current.push(x * imgW, y * imgH);
     }
     pendingBrushPoints.current = [];
+    if ((activeTool === 'brush' || activeTool === 'maskBrush') && activeDoc) {
+      const canvas = brushPreviewCanvasRef.current;
+      const context = canvas?.getContext('2d');
+      if (canvas && context) {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        drawBrushStroke(context, {
+          id: strokeId.current,
+          points: currentStroke.current,
+          size: cleanupSettings.brushSize,
+          color: cleanupSettings.brushColor,
+          opacity: cleanupSettings.brushOpacity,
+          hardness: cleanupSettings.brushHardness,
+          mode: 'paint',
+          purpose: activeTool === 'maskBrush' ? 'mask' : 'paint',
+        }, imgW, imgH, {
+          color: activeTool === 'maskBrush' ? 'rgb(255, 128, 0)' : cleanupSettings.brushColor,
+          compositeOperation: 'source-over',
+        });
+        canvas.dataset.hasPreview = 'true';
+      }
+      return;
+    }
     const line = liveLineRef.current;
     if (line) {
       line.points(livePoints.current);
@@ -1844,21 +1878,27 @@ export function CanvasArea() {
       currentStroke.current = [imagePoint.x, imagePoint.y];
       pendingBrushPoints.current = [];
       lastBrushPointRef.current = { x: imagePoint.x, y: imagePoint.y };
-      // Start the live preview line
+      // Eraser still uses a neutral marker; brush and mask preview their real
+      // raster stamps on the DOM canvas above the document.
       livePoints.current = [imgX, imgY];
       const line = liveLineRef.current;
       if (line) {
+        if (activeTool === 'brush' || activeTool === 'maskBrush') {
+          line.setAttrs({ points: [], visible: false, shadowBlur: 0 });
+          line.getLayer()?.batchDraw();
+          return;
+        }
         line.points(livePoints.current);
         // Eraser preview is a translucent marker — destination-out would visually
         // punch through the whole composite while drawing.
-        line.stroke(activeTool === 'eraser' ? 'rgba(140,140,150,0.55)' : activeTool === 'maskBrush' ? 'rgba(255,128,0,0.6)' : cleanupSettings.brushColor);
+        line.stroke('rgba(140,140,150,0.55)');
         line.opacity(cleanupSettings.brushOpacity);
         line.globalCompositeOperation('source-over');
         const previewDiameter = cleanupSettings.brushSize * activeDoc.height * previewScale;
-        line.strokeWidth(activeTool === 'brush' ? previewDiameter * (0.3 + cleanupSettings.brushHardness * 0.7) : previewDiameter);
-        line.shadowColor(activeTool === 'brush' ? cleanupSettings.brushColor : 'transparent');
-        line.shadowBlur(activeTool === 'brush' ? (1 - cleanupSettings.brushHardness) * previewDiameter * 0.55 : 0);
-        line.shadowOpacity(activeTool === 'brush' ? 0.75 : 0);
+        line.strokeWidth(previewDiameter);
+        line.shadowColor('transparent');
+        line.shadowBlur(0);
+        line.shadowOpacity(0);
         line.visible(true);
         line.getLayer()?.batchDraw();
       }
@@ -2091,6 +2131,7 @@ export function CanvasArea() {
       lastBrushPointRef.current = null;
       // Hide the live preview line (the committed stroke takes over)
       livePoints.current = [];
+      clearBrushPreview();
       const line = liveLineRef.current;
       if (line) {
         line.points([]);
@@ -2859,6 +2900,24 @@ export function CanvasArea() {
         </Stage>
       )}
 
+      {activeDoc && (
+        <canvas
+          ref={brushPreviewCanvasRef}
+          data-testid="brush-preview-overlay"
+          width={Math.max(1, Math.round(imgW))}
+          height={Math.max(1, Math.round(imgH))}
+          style={{
+            position: 'absolute',
+            left: viewport.x,
+            top: viewport.y,
+            width: imgW * viewport.scale,
+            height: imgH * viewport.scale,
+            pointerEvents: 'none',
+            zIndex: 9,
+          }}
+        />
+      )}
+
       {textDraftRect && activeDoc && textPointerGestureRef.current && (
         <TextDraftOverlay
           rect={textDraftRect}
@@ -3013,20 +3072,15 @@ export function CanvasArea() {
 
       {/* Brush cursor (positioned imperatively, no re-renders) */}
       {(activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur') && (
-        <div
+        <BrushCursor
           ref={cursorRef}
-          style={{
-            position: 'absolute',
-            top: 0, left: 0,
-            display: 'none',
-            borderRadius: '50%',
-            border: '1.5px solid rgba(255,255,255,0.85)',
-            outline: '1px solid rgba(0,0,0,0.4)',
-            pointerEvents: 'none',
-            willChange: 'transform',
-            contain: 'layout paint',
-            zIndex: 10,
-          }}
+          diameterPx={(activeTool === 'blur' ? blurSettings.brushSize : cleanupSettings.brushSize)
+            * (activeDoc?.height ?? 1000) * previewScale * viewport.scale}
+          hardness={activeTool === 'blur' ? blurSettings.hardness : cleanupSettings.brushHardness}
+          color={activeTool === 'maskBrush' ? '#ff8000'
+            : activeTool === 'blur' ? '#5e9fe8'
+              : activeTool === 'eraser' ? '#ffffff' : cleanupSettings.brushColor}
+          showCrosshair
         />
       )}
     </div>
