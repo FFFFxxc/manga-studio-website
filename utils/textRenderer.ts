@@ -17,7 +17,7 @@ export function createTextNodeConfig(
   const width = Math.max(1, documentWidth * safeScale);
   const height = Math.max(1, documentHeight * safeScale);
 
-  return {
+  const config: TextConfig = {
     x: text.x * width,
     y: text.y * height,
     text: text.vertical ? Array.from(text.text).join('\n') : text.text,
@@ -40,6 +40,10 @@ export function createTextNodeConfig(
     scaleY: text.scaleY,
     rotation: text.rotation,
   };
+  if (text.textMode === 'paragraph' && Number.isFinite(text.height) && text.height! > 0) {
+    config.height = text.height! * height;
+  }
+  return config;
 }
 
 /** Draw with Konva itself so export uses the same wrapping/baseline metrics as preview. */
@@ -57,7 +61,20 @@ export function renderTextObjectToContext(
   const width = Math.max(1, Math.ceil(bounds.x + bounds.width) - x);
   const height = Math.max(1, Math.ceil(bounds.y + bounds.height) - y);
   const canvas = node.toCanvas({ x, y, width, height, pixelRatio: 1 });
+  const shouldClip = text.textMode === 'paragraph' && Number.isFinite(text.height) && text.height! > 0;
+  if (shouldClip) {
+    context.save?.();
+    context.beginPath();
+    context.rect(
+      text.x * documentWidth,
+      text.y * documentHeight,
+      Math.max(1, text.width * documentWidth * Math.abs(text.scaleX || 1)),
+      Math.max(1, text.height! * documentHeight * Math.abs(text.scaleY || 1)),
+    );
+    context.clip();
+  }
   context.drawImage(canvas, x, y);
+  if (shouldClip) context.restore?.();
   node.destroy();
 }
 

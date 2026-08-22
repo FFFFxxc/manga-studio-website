@@ -32,6 +32,8 @@ export interface WatermarkObject {
   locked?: boolean;
 }
 
+export type TextMode = 'point' | 'paragraph';
+
 export interface TextObject {
   id: string;
   text: string;
@@ -49,7 +51,9 @@ export interface TextObject {
   bold?: boolean;
   italic?: boolean;
   vertical?: boolean;
+  textMode?: TextMode;
   width: number;        // fraction of image width
+  height?: number;      // fraction of image height; only paragraph text clips to it
   x: number;
   y: number;
   scaleX: number;

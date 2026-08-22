@@ -139,7 +139,17 @@ export function sanitizeText(text: TextObject): TextObject | null {
   if (![text.x, text.y, text.width, text.fontSize].every(validPosition)) return null;
   const x = clamp01(text.x);
   const y = clamp01(text.y);
-  return { ...text, x, y, width: Math.max(0.01, Math.min(1 - x, Math.abs(text.width))), fontSize: Math.max(0.003, Math.min(0.5, Math.abs(text.fontSize))) };
+  const { height, textMode, ...rest } = text;
+  const sanitized: TextObject = {
+    ...rest,
+    x,
+    y,
+    width: Math.max(0.01, Math.min(1 - x, Math.abs(text.width))),
+    fontSize: Math.max(0.003, Math.min(0.5, Math.abs(text.fontSize))),
+  };
+  if (textMode === 'point' || textMode === 'paragraph') sanitized.textMode = textMode;
+  if (Number.isFinite(height) && height! > 0) sanitized.height = Math.max(0.003, Math.min(1 - y, height!));
+  return sanitized;
 }
 
 export function sanitizeWatermark(wm: WatermarkObject): WatermarkObject | null {
