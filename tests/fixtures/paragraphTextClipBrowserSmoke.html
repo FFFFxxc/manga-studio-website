@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paragraph text clip browser smoke</title>
+    <style>
+      body { background: #18181b; color: #f4f4f5; font: 14px system-ui; }
+      img { width: 480px; image-rendering: pixelated; border: 1px solid #52525b; }
+    </style>
+  </head>
+  <body>
+    <pre id="result">Running paragraph text clip pixel readback…</pre>
+    <section id="images"></section>
+    <script type="module">
+      import { runParagraphTextClipBrowserSmoke } from './paragraphTextClipBrowserSmoke.ts';
+
+      const result = document.querySelector('#result');
+      try {
+        const smoke = runParagraphTextClipBrowserSmoke();
+        result.dataset.status = 'passed';
+        result.textContent = `PASS\n${JSON.stringify({
+          width: smoke.width,
+          height: smoke.height,
+          paragraph: smoke.paragraph,
+          samples: smoke.samples,
+        }, null, 2)}`;
+        const figure = document.createElement('figure');
+        const caption = document.createElement('figcaption');
+        caption.textContent = 'Rendered paragraph clip';
+        const image = document.createElement('img');
+        image.alt = 'Rendered paragraph clip';
+        image.src = smoke.image;
+        figure.append(caption, image);
+        document.querySelector('#images')?.append(figure);
+      } catch (error) {
+        result.dataset.status = 'failed';
+        result.textContent = `FAIL\n${error instanceof Error ? error.stack : String(error)}`;
+        throw error;
+      }
+    </script>
+  </body>
+</html>
