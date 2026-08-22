@@ -60,6 +60,7 @@ import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
 import { BrushCursor } from './BrushCursor';
 import { getBrushTipRadii } from '@/utils/brushTip';
 import { RasterEffectOverlay, type RasterEffectOverlayHandle } from './RasterEffectOverlay';
+import { buildColorSamplingCanvas, sampleCanvasColor } from '@/utils/colorSampler';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -1150,7 +1151,7 @@ function CropOverlay({
 export function CanvasArea() {
   const {
     documents, activeDocIndex, setActiveDoc,
-    activeTool, setActiveTool, cleanupSettings, blurSettings,
+    activeTool, setActiveTool, cleanupSettings, blurSettings, eyedropperSettings, setForegroundColor,
         addStroke, addMaskStroke, addMaskElement, addEraseElement, updateWatermark, updateText, updateTranslationMask, updateShape, updateBubble,
     selectLayer, updateCleanupSettings,
     selectedObject, setSelectedObject,
@@ -1170,6 +1171,8 @@ export function CanvasArea() {
     setActiveTool: state.setActiveTool,
     cleanupSettings: state.cleanupSettings,
     blurSettings: state.blurSettings,
+    eyedropperSettings: state.eyedropperSettings,
+    setForegroundColor: state.setForegroundColor,
     addStroke: state.addStroke,
     addMaskStroke: state.addMaskStroke,
     addMaskElement: state.addMaskElement,
@@ -1269,6 +1272,10 @@ export function CanvasArea() {
   const [effectPreviewSlot, setEffectPreviewSlot] = useState<RasterEffectPreview | null>(null);
   const [activeEffectGestureSettings, setActiveEffectGestureSettings] = useState<BlurSettings | null>(null);
   const shiftPressedRef = useRef(false);
+  const altPressedRef = useRef(false);
+  const lastPaintToolRef = useRef<'brush' | 'cloneStamp'>('brush');
+  const colorSampleTokenRef = useRef(0);
+  const [temporaryEyedropper, setTemporaryEyedropper] = useState(false);
   const checkerPattern = useRef<HTMLCanvasElement | null>(null);
   if (typeof document !== 'undefined' && !checkerPattern.current) checkerPattern.current = makeCheckerPattern();
 
@@ -1285,6 +1292,10 @@ export function CanvasArea() {
     const timer = window.setTimeout(() => setClipboardInfo(null), 2600);
     return () => window.clearTimeout(timer);
   }, [clipboardInfo]);
+
+  useEffect(() => {
+    if (activeTool === 'brush' || activeTool === 'cloneStamp') lastPaintToolRef.current = activeTool;
+  }, [activeTool]);
 
   const cancelScheduledThumbnail = useCallback(() => {
     if (thumbnailTimerRef.current !== null) {
@@ -1979,6 +1990,34 @@ export function CanvasArea() {
       panVpStart.current = { x: viewport.x, y: viewport.y };
       return;
     }
+    const temporaryColorSample = (e.evt.altKey || altPressedRef.current) && (activeTool === 'brush' || activeTool === 'cloneStamp');
+    if ((activeTool === 'eyedropper' || temporaryColorSample) && activeDoc && e.evt.button === 0) {
+      const position = stageRef.current?.getPointerPosition();
+      const point = position && screenToImage(position, { viewport, imageWidth: imgW, imageHeight: imgH });
+      if (!point?.inside) return;
+      const documentId = activeDoc.id;
+      const samplePoint = { x: point.x * activeDoc.width, y: point.y * activeDoc.height };
+      const sampleMode = eyedropperSettings.sample;
+      const token = ++colorSampleTokenRef.current;
+      void buildColorSamplingCanvas(activeDoc, sampleMode).then(canvas => {
+        const latest = useStore.getState();
+        if (token !== colorSampleTokenRef.current || latest.documents[latest.activeDocIndex]?.id !== documentId) return;
+        const sampled = sampleCanvasColor(canvas, samplePoint);
+        if (!sampled) {
+          setClipboardInfo('В этой точке нет непрозрачного цвета');
+          return;
+        }
+        latest.setForegroundColor(sampled.hex);
+        setClipboardInfo(`Цвет ${sampled.hex.toUpperCase()} взят`);
+        if (!temporaryColorSample && latest.activeTool === 'eyedropper') {
+          latest.setActiveTool(lastPaintToolRef.current);
+        }
+      }).catch(error => {
+        if (token !== colorSampleTokenRef.current) return;
+        setClipboardInfo(error instanceof Error ? error.message : 'Не удалось взять цвет');
+      });
+      return;
+    }
     if (activeTool === 'text' && activeDoc && e.evt.button === 0 && e.target.getClassName() !== 'Text') {
       const stage = stageRef.current;
       const position = stage?.getPointerPosition();
@@ -2558,9 +2597,26 @@ export function CanvasArea() {
   // Track Shift independently: ClipboardEvent does not expose modifier keys
   // consistently, but Ctrl/Cmd+Shift+V must always force a new page.
   useEffect(() => {
-    const keyDown = (event: KeyboardEvent) => { if (event.key === 'Shift') shiftPressedRef.current = true; };
-    const keyUp = (event: KeyboardEvent) => { if (event.key === 'Shift') shiftPressedRef.current = false; };
-    const blur = () => { shiftPressedRef.current = false; };
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') shiftPressedRef.current = true;
+      if (event.key === 'Alt') {
+        altPressedRef.current = true;
+        const tool = useStore.getState().activeTool;
+        if (tool === 'brush' || tool === 'cloneStamp') setTemporaryEyedropper(true);
+      }
+    };
+    const keyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') shiftPressedRef.current = false;
+      if (event.key === 'Alt') {
+        altPressedRef.current = false;
+        setTemporaryEyedropper(false);
+      }
+    };
+    const blur = () => {
+      shiftPressedRef.current = false;
+      altPressedRef.current = false;
+      setTemporaryEyedropper(false);
+    };
     window.addEventListener('keydown', keyDown, true);
     window.addEventListener('keyup', keyUp, true);
     window.addEventListener('blur', blur);
@@ -2918,7 +2974,7 @@ export function CanvasArea() {
           style={{
             display: 'block',
             touchAction: 'none',
-            cursor: activeTool === 'pan' ? 'grab' : (activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'wand' || activeTool === 'rectSelect' || activeTool === 'crop' || activeTool === 'blur') ? 'crosshair' : activeTool === 'text' ? 'text' : (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser') ? 'none' : 'default',
+            cursor: activeTool === 'pan' ? 'grab' : (temporaryEyedropper || activeTool === 'eyedropper' || activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'wand' || activeTool === 'rectSelect' || activeTool === 'crop' || activeTool === 'blur') ? 'crosshair' : activeTool === 'text' ? 'text' : (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser') ? 'none' : 'default',
           }}
         >
           {/* Base image layer — key includes fontsVersion so the canvas
@@ -3360,7 +3416,7 @@ export function CanvasArea() {
       })()}
 
       {/* Brush cursor (positioned imperatively, no re-renders) */}
-      {(activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur') && (
+      {!temporaryEyedropper && (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur') && (
         <BrushCursor
           ref={cursorRef}
           diameterPx={(activeTool === 'blur' ? activeEffectGestureSettings?.brushSize ?? blurSettings.brushSize : activeBrushGestureSettings?.size ?? cleanupSettings.brushSize)

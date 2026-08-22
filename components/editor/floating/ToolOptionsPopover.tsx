@@ -15,6 +15,7 @@ const TOOL_LABELS: Partial<Record<ActiveTool, string>> = {
   eraser: 'Ластик',
   crop: 'Кадрирование / Размер',
   blur: 'Размытие / Пикселизация',
+  eyedropper: 'Пипетка',
   select: 'Объект',
 };
 
@@ -149,7 +150,7 @@ function BrushOptions({ tool }: { tool: 'brush' | 'maskBrush' | 'eraser' }) {
       <RangeField label="Размер" value={settings.brushSize} min={0.003} max={0.2} step={0.002} onChange={brushSize => update({ brushSize })} format={value => `${Math.round(value * 1000) / 10}%`} />
       <RangeField label="Жёсткость" value={settings.brushHardness} min={0} max={1} step={0.05} onChange={brushHardness => update({ brushHardness })} format={value => `${Math.round(value * 100)}%`} />
       <RangeField label="Непрозрачность" value={settings.brushOpacity} min={0.05} max={1} step={0.05} onChange={brushOpacity => update({ brushOpacity })} format={value => `${Math.round(value * 100)}%`} />
-      {tool === 'brush' && <Field label="Цвет"><input type="color" value={settings.brushColor} onChange={event => update({ brushColor: event.target.value })} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>}
+      {tool === 'brush' && <Field label="Цвет"><input type="color" value={settings.brushColor} onChange={event => useStore.getState().setForegroundColor(event.target.value)} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>}
     </div>
   );
 }
@@ -296,6 +297,25 @@ function BlurOptions() {
   );
 }
 
+function EyedropperOptions() {
+  const settings = useStore(state => state.eyedropperSettings);
+  const foregroundColor = useStore(state => state.foregroundColor);
+  const update = useStore(state => state.updateEyedropperSettings);
+  const setForegroundColor = useStore(state => state.setForegroundColor);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Field label="Образец">
+        <select value={settings.sample} onChange={event => update({ sample: event.target.value as typeof settings.sample })} style={fieldStyle}>
+          <option value="all">Все слои</option>
+          <option value="current">Текущий растровый слой</option>
+        </select>
+      </Field>
+      <Field label="Цвет"><input aria-label="Основной цвет" type="color" value={foregroundColor} onChange={event => setForegroundColor(event.target.value)} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>После клика редактор вернётся к кисти. Alt/Option временно берёт цвет, не переключая инструмент.</span>
+    </div>
+  );
+}
+
 function TranslationMaskOptions({ objectId }: { objectId: string }) {
   const store = useStore();
   const document = store.documents[store.activeDocIndex];
@@ -379,8 +399,9 @@ export function ToolOptionsPopoverHost() {
       {(effectiveTool === 'brush' || effectiveTool === 'maskBrush' || effectiveTool === 'eraser') && <BrushOptions tool={effectiveTool} />}
       {effectiveTool === 'crop' && <CropOptions />}
       {effectiveTool === 'blur' && <BlurOptions />}
+      {effectiveTool === 'eyedropper' && <EyedropperOptions />}
       {maskId && <TranslationMaskOptions objectId={maskId} />}
-      {!maskId && !['text', 'brush', 'maskBrush', 'eraser', 'crop', 'blur'].includes(effectiveTool) && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Для этого объекта доступны трансформация и действия в контекстном меню слоя.</div>}
+      {!maskId && !['text', 'brush', 'maskBrush', 'eraser', 'crop', 'blur', 'eyedropper'].includes(effectiveTool) && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Для этого объекта доступны трансформация и действия в контекстном меню слоя.</div>}
     </FloatingPanel>
   );
 }

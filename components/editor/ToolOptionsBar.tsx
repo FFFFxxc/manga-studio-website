@@ -23,7 +23,7 @@ const selectionModes: Array<{ mode: SelectionMode; label: string; hint: string }
 
 export function ToolOptionsBar() {
   const state = useStore();
-  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, selectedObject, documents, activeDocIndex } = state;
+  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, eyedropperSettings, updateEyedropperSettings, foregroundColor, setForegroundColor, selectedObject, documents, activeDocIndex } = state;
   const doc = activeDocIndex >= 0 ? documents[activeDocIndex] : null;
   const isMarking = activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser';
   const isEffect = activeTool === 'blur';
@@ -85,7 +85,7 @@ export function ToolOptionsBar() {
           />
           <span>%</span>
         </label>
-        {activeTool === 'brush' && <input aria-label="Цвет кисти" title="Цвет кисти" type="color" value={cleanupSettings.brushColor} onChange={event => updateCleanupSettings({ brushColor: event.target.value })} onMouseDown={event => event.stopPropagation()} style={{ width: 30, height: 26, cursor: 'pointer', pointerEvents: 'auto' }} />}
+        {activeTool === 'brush' && <input aria-label="Цвет кисти" title="Основной цвет" type="color" value={cleanupSettings.brushColor} onChange={event => setForegroundColor(event.target.value)} onMouseDown={event => event.stopPropagation()} style={{ width: 30, height: 26, cursor: 'pointer', pointerEvents: 'auto' }} />}
       </>}
       {isEffect && <>
         <select aria-label="Растровый эффект" value={blurSettings.mode} onChange={event => updateBlurSettings({ mode: event.target.value as typeof blurSettings.mode })}>
@@ -129,7 +129,14 @@ export function ToolOptionsBar() {
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Сила <EditorSlider label="Количество резкости" min={5} max={100} step={5} value={Math.round(blurSettings.sharpenAmount * 100)} onChange={value => updateBlurSettings({ sharpenAmount: value / 100 })} style={{ width: 76 }} /> <span>{Math.round(blurSettings.sharpenAmount * 100)}%</span></label>
         </>}
       </>}
-      {activeTool === 'eyedropper' && <span>Кликните по изображению, чтобы взять итоговый цвет · I</span>}
+      {activeTool === 'eyedropper' && <>
+        <select aria-label="Образец пипетки" value={eyedropperSettings.sample} onChange={event => updateEyedropperSettings({ sample: event.target.value as typeof eyedropperSettings.sample })}>
+          <option value="all">Все слои</option>
+          <option value="current">Текущий слой</option>
+        </select>
+        <input aria-label="Основной цвет" type="color" value={foregroundColor} onChange={event => setForegroundColor(event.target.value)} style={{ width: 30, height: 26, cursor: 'pointer' }} />
+        <span>Кликните по холсту · Alt/Option временно включает пипетку для кисти</span>
+      </>}
       {activeTool === 'cloneStamp' && <span>Alt/Option + клик — выбрать источник · S</span>}
       {activeTool === 'smudge' && <span>Переносит цвет по направлению движения · R</span>}
       {activeTool === 'sharpen' && <span>Повышает локальную резкость кистью · R</span>}

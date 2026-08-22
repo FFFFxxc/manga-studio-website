@@ -26,4 +26,9 @@ describe('bubble presets', () => {
     expect(createDefaultBubble('caption').tail).toBeNull();
     expect(createDefaultBubble('narration').tail).toBeNull();
   });
+
+  it('uses the current foreground color only for newly created bubble text', () => {
+    expect(createDefaultBubble('speech', '#12ab34').text.fill).toBe('#12ab34');
+    expect(createDefaultBubble('speech').text.fill).toBe('#000000');
+  });
 });

@@ -506,6 +506,10 @@ export interface BlurSettings {
   sharpenAmount: number;
 }
 
+export interface EyedropperSettings {
+  sample: 'all' | 'current';
+}
+
 export type RasterEffectMode = 'blur' | 'pixelate' | 'noise' | 'sharpen';
 
 export interface RasterEffectParameters {

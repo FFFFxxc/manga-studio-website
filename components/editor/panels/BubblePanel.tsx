@@ -79,7 +79,7 @@ export const BUBBLE_PRESETS: PreviewDef[] = [
   },
 ];
 
-export function createDefaultBubble(kind: BubbleKind): BubbleObject {
+export function createDefaultBubble(kind: BubbleKind, textColor = '#000000'): BubbleObject {
   const defaultTail = BUBBLE_PRESETS.find(preset => preset.kind === kind)?.defaultTail;
   return {
     id: uid(),
@@ -109,7 +109,7 @@ export function createDefaultBubble(kind: BubbleKind): BubbleObject {
       content: '',
       fontFamily: 'Russo One',
       fontSize: 14,
-      fill: '#000000',
+      fill: textColor,
       align: 'center',
       lineHeight: 1.3,
     },
@@ -225,7 +225,7 @@ function SliderRow({
 // Main panel
 // ─────────────────────────────────────────────────────────────────────────────
 export function BubblePanel() {
-  const { activeDocIndex, documents, selectedObject, addBubble, updateBubble, pushHistory } = useStore();
+  const { activeDocIndex, documents, selectedObject, addBubble, updateBubble, pushHistory, foregroundColor } = useStore();
 
   const hasDoc    = activeDocIndex >= 0;
   const activeDoc = hasDoc ? documents[activeDocIndex] : null;
@@ -235,7 +235,7 @@ export function BubblePanel() {
 
   function createBubble(kind: BubbleKind) {
     if (!activeDoc) return;
-    addBubble(createDefaultBubble(kind));
+    addBubble(createDefaultBubble(kind, foregroundColor));
   }
 
   function updateTail(updates: Partial<BubbleTail>) {

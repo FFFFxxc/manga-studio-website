@@ -29,6 +29,7 @@ import type {
   BubbleKind,
   PerspectiveQuad,
   BlurSettings,
+  EyedropperSettings,
   CropSettings,
   TranslationMaskSettings,
   TranslationMaskObject,
@@ -115,6 +116,10 @@ const defaultBlurSettings: BlurSettings = {
   noiseMonochrome: true,
   sharpenRadius: 1,
   sharpenAmount: 0.5,
+};
+
+const defaultEyedropperSettings: EyedropperSettings = {
+  sample: 'all',
 };
 
 const defaultTranslationMaskSettings: TranslationMaskSettings = {
@@ -213,6 +218,8 @@ export interface AppState {
   textSettings: TextSettings;
   cropSettings: CropSettings;
   blurSettings: BlurSettings;
+  eyedropperSettings: EyedropperSettings;
+  foregroundColor: string;
   translationMaskSettings: TranslationMaskSettings;
   recentColors: string[];
   exportSettings: ExportSettings;
@@ -321,6 +328,9 @@ export interface AppState {
   updateTextSettings: (updates: Partial<TextSettings>) => void;
   updateCropSettings: (updates: Partial<CropSettings>) => void;
   updateBlurSettings: (updates: Partial<BlurSettings>) => void;
+  updateEyedropperSettings: (updates: Partial<EyedropperSettings>) => void;
+  /** Updates defaults only; existing document objects are never recolored. */
+  setForegroundColor: (color: string) => void;
   updateTranslationMaskSettings: (updates: Partial<TranslationMaskSettings>) => void;
   rememberTextColor: (color: string) => void;
   updateExportSettings: (updates: Partial<ExportSettings>) => void;
@@ -350,6 +360,8 @@ export const useStore = create<AppState>((set, get) => ({
   textSettings: defaultTextSettings,
   cropSettings: defaultCropSettings,
   blurSettings: defaultBlurSettings,
+  eyedropperSettings: defaultEyedropperSettings,
+  foregroundColor: '#000000',
   translationMaskSettings: defaultTranslationMaskSettings,
   recentColors: loadStoredRecentColors(),
   exportSettings: defaultExportSettings,
@@ -1400,6 +1412,16 @@ export const useStore = create<AppState>((set, get) => ({
   updateTextSettings: (u) => set(s => ({ textSettings: { ...s.textSettings, ...u } })),
   updateCropSettings: (u) => set(s => ({ cropSettings: { ...s.cropSettings, ...u } })),
   updateBlurSettings: (u) => set(s => ({ blurSettings: { ...s.blurSettings, ...u } })),
+  updateEyedropperSettings: (u) => set(s => ({ eyedropperSettings: { ...s.eyedropperSettings, ...u } })),
+  setForegroundColor: (color) => set(state => {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) return {};
+    const normalized = color.toLowerCase();
+    return {
+      foregroundColor: normalized,
+      cleanupSettings: { ...state.cleanupSettings, brushColor: normalized },
+      textSettings: { ...state.textSettings, fill: normalized },
+    };
+  }),
   updateTranslationMaskSettings: (u) => set(s => ({ translationMaskSettings: { ...s.translationMaskSettings, ...u } })),
   rememberTextColor: (color) => set(state => {
     const recentColors = addRecentColor(state.recentColors, color);
