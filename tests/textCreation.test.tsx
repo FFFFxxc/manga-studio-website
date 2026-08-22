@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TextObject } from '@/types';
 
+const stageCommitHook = vi.hoisted(() => ({
+  callback: null as null | ((node: HTMLDivElement, cursor: string | undefined) => void),
+}));
+
 vi.mock('react-konva', () => {
   type Point = { x: number; y: number };
   type KonvaProps = {
@@ -17,6 +21,7 @@ vi.mock('react-konva', () => {
     width?: number;
     height?: number;
     name?: string;
+    style?: React.CSSProperties;
   };
 
   const primitiveNode = {
@@ -95,9 +100,11 @@ vi.mock('react-konva', () => {
               width: props.width ?? 800, height: props.height ?? 600,
               toJSON: () => ({}),
             });
+            stageCommitHook.callback?.(node, props.style?.cursor);
           }
         }}
         data-testid="canvas-stage"
+        style={props.style}
         onPointerDown={event => { remember(event); props.onPointerDown?.(eventFor(event)); }}
         onPointerMove={event => { remember(event); props.onPointerMove?.(eventFor(event)); }}
         onPointerUp={event => { remember(event); props.onPointerUp?.(eventFor(event)); }}
@@ -186,8 +193,19 @@ function dragCanvas(stage: HTMLElement, start: { x: number; y: number }, end: { 
   fireEvent.pointerUp(stage, { button: 0, pointerId: 2, clientX: end.x, clientY: end.y });
 }
 
+function dispatchUnflushedPointer(
+  target: HTMLElement,
+  type: 'pointerdown' | 'pointermove' | 'pointercancel',
+  init: MouseEventInit & { pointerId: number },
+) {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, ...init });
+  Object.defineProperty(event, 'pointerId', { value: init.pointerId });
+  target.dispatchEvent(event);
+}
+
 describe('text creation drafts', () => {
   beforeEach(() => {
+    stageCommitHook.callback = null;
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       fillStyle: '',
@@ -202,6 +220,7 @@ describe('text creation drafts', () => {
   });
 
   afterEach(() => {
+    stageCommitHook.callback = null;
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -456,5 +475,44 @@ describe('text creation drafts', () => {
     const editor = screen.getByRole('textbox');
     expect(editor.getAttribute('data-text-mode')).toBe('paragraph');
     expect(Number.parseFloat(editor.style.width)).toBeCloseTo(300, 5);
+  });
+
+  it('keeps transient text ownership after the active tool changes', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 51, clientX: 200, clientY: 160 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 51, clientX: 320, clientY: 240 });
+    const viewportBeforeSecondPointer = { ...useStore.getState().viewport };
+    const overlayWidthBeforeSecondPointer = screen.getByTestId('text-draft-overlay').style.width;
+
+    let transientResult: { viewport: typeof viewportBeforeSecondPointer; overlayWidth: string } | null = null;
+    stageCommitHook.callback = (node, cursor) => {
+      if (cursor !== 'default') return;
+      stageCommitHook.callback = null;
+      dispatchUnflushedPointer(node, 'pointerdown', {
+        button: 1, pointerId: 52, clientX: 350, clientY: 260,
+      });
+      dispatchUnflushedPointer(node, 'pointermove', {
+        button: 1, pointerId: 52, clientX: 450, clientY: 360,
+      });
+      dispatchUnflushedPointer(node, 'pointercancel', {
+        button: 1, pointerId: 52, clientX: 450, clientY: 360,
+      });
+      transientResult = {
+        viewport: { ...useStore.getState().viewport },
+        overlayWidth: screen.getByTestId('text-draft-overlay').style.width,
+      };
+    };
+
+    act(() => useStore.getState().setActiveTool('select'));
+
+    expect(transientResult).toEqual({
+      viewport: viewportBeforeSecondPointer,
+      overlayWidth: overlayWidthBeforeSecondPointer,
+    });
+    expect(screen.queryByTestId('text-draft-overlay')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(useStore.getState().documents[0].texts).toHaveLength(0);
+    expect(useStore.getState().documents[0].past).toHaveLength(0);
   });
 });

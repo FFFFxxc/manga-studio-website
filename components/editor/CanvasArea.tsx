@@ -1579,7 +1579,7 @@ export function CanvasArea() {
   }, [inlineEditingTextId, pendingTextDraft]);
 
   const handleMouseDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
-    if (activeTool === 'text' && textPointerGestureRef.current) return;
+    if (textPointerGestureRef.current) return;
     if (activeTool === 'pan' || e.evt.button === 1) {
       isPanning.current = true;
       panStart.current = { x: e.evt.clientX, y: e.evt.clientY };
