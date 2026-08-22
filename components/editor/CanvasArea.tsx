@@ -1440,6 +1440,7 @@ export function CanvasArea() {
   };
 
   const clearTextDraftState = () => {
+    setTextEditorOverflowing(false);
     clearTextGeometryDraft();
     setPendingTextDraft(null);
     setInlineEditingTextId(null);
@@ -1546,6 +1547,7 @@ export function CanvasArea() {
       rotation: 0,
       visible: true,
     };
+    setTextEditorOverflowing(false);
     setPendingTextDraft({ documentId: gesture.documentId, id, object });
     isNewTextRef.current = true;
     setInlineEditingTextId(id);
@@ -1559,7 +1561,10 @@ export function CanvasArea() {
   }, [activeTool]);
 
   useEffect(() => {
-    if (pendingTextDraft && !inlineEditingTextId) setPendingTextDraft(null);
+    if (pendingTextDraft && !inlineEditingTextId) {
+      setTextEditorOverflowing(false);
+      setPendingTextDraft(null);
+    }
   }, [inlineEditingTextId, pendingTextDraft]);
 
   useEffect(() => {
@@ -2637,6 +2642,7 @@ export function CanvasArea() {
                     onEditRequest={() => {
                       if (activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'rectSelect' || activeTool === 'wand') return;
                       setSelectedObject({ id: txt.id, type: 'text' });
+                      setTextEditorOverflowing(false);
                       setPendingTextDraft({ documentId: activeDoc.id, id: txt.id, object: { ...txt }, original: { ...txt } });
                       isNewTextRef.current = false;
                       setInlineEditingTextId(txt.id);
@@ -2862,6 +2868,15 @@ export function CanvasArea() {
         const paragraphHeight = (editingTxt.height ?? 0) * activeDoc.height * previewScale * viewport.scale;
         const paragraphX = editingTxt.x * activeDoc.width * previewScale * viewport.scale + viewport.x;
         const paragraphY = editingTxt.y * activeDoc.height * previewScale * viewport.scale + viewport.y;
+        const markerScaleX = Number.isFinite(editingTxt.scaleX) ? editingTxt.scaleX : 1;
+        const markerScaleY = Number.isFinite(editingTxt.scaleY) ? editingTxt.scaleY : 1;
+        const markerRadians = (Number.isFinite(editingTxt.rotation) ? editingTxt.rotation : 0) * Math.PI / 180;
+        const markerX = paragraphX
+          + paragraphWidth * markerScaleX * Math.cos(markerRadians)
+          - paragraphHeight * markerScaleY * Math.sin(markerRadians);
+        const markerY = paragraphY
+          + paragraphWidth * markerScaleX * Math.sin(markerRadians)
+          + paragraphHeight * markerScaleY * Math.cos(markerRadians);
         return (
           <>
             <InlineTextEditor
@@ -2881,8 +2896,8 @@ export function CanvasArea() {
                 data-testid="paragraph-text-overflow-marker"
                 style={{
                   position: 'absolute',
-                  left: paragraphX + paragraphWidth + 3,
-                  top: paragraphY + paragraphHeight + 3,
+                  left: markerX + 3,
+                  top: markerY + 3,
                   zIndex: 51,
                   pointerEvents: 'none',
                   color: 'var(--accent)',

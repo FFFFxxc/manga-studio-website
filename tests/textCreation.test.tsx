@@ -248,6 +248,78 @@ describe('text creation drafts', () => {
     expect(useStore.getState().documents[0].past).toHaveLength(0);
   });
 
+  // Mutation caught: leaving overflow state behind after closing an editor
+  // inserts a stale '+' into the next paragraph before it can measure itself.
+  it('does not flash an old paragraph overflow marker on the next draft', async () => {
+    const user = userEvent.setup();
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+
+    dragCanvas(stage, { x: 200, y: 160 }, { x: 500, y: 320 });
+    const overflowingEditor = screen.getByRole('textbox') as HTMLTextAreaElement;
+    Object.defineProperties(overflowingEditor, {
+      clientHeight: { configurable: true, value: 120 },
+      scrollHeight: { configurable: true, value: 180 },
+    });
+    fireEvent.input(overflowingEditor);
+    expect(screen.getByTestId('paragraph-text-overflow-marker')).toBeTruthy();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('paragraph-text-overflow-marker')).toBeNull();
+
+    const markerAdds: Element[] = [];
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof Element && node.matches('[data-testid="paragraph-text-overflow-marker"]')) markerAdds.push(node);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    dragCanvas(stage, { x: 220, y: 180 }, { x: 460, y: 300 });
+    await Promise.resolve();
+    observer.disconnect();
+
+    expect(markerAdds).toHaveLength(0);
+    expect(screen.queryByTestId('paragraph-text-overflow-marker')).toBeNull();
+
+    const nonOverflowingEditor = screen.getByRole('textbox') as HTMLTextAreaElement;
+    Object.defineProperties(nonOverflowingEditor, {
+      clientHeight: { configurable: true, value: 120 },
+      scrollHeight: { configurable: true, value: 120 },
+    });
+    fireEvent.input(nonOverflowingEditor);
+    expect(screen.queryByTestId('paragraph-text-overflow-marker')).toBeNull();
+  });
+
+  // Mutation caught: using the untransformed box corner places the marker far
+  // from an editor that has its own CSS rotation and scale transform.
+  it('anchors a transformed paragraph overflow marker at its visual lower-right corner', () => {
+    seedEditor([pointText({
+      textMode: 'paragraph',
+      width: 0.2,
+      height: 0.15,
+      rotation: 90,
+      scaleX: 2,
+      scaleY: 0.5,
+    })]);
+    render(<CanvasArea />);
+
+    fireEvent.doubleClick(screen.getByTestId('konva-text'));
+    const editor = screen.getByRole('textbox') as HTMLTextAreaElement;
+    Object.defineProperties(editor, {
+      clientHeight: { configurable: true, value: 120 },
+      scrollHeight: { configurable: true, value: 180 },
+    });
+    fireEvent.input(editor);
+
+    const marker = screen.getByTestId('paragraph-text-overflow-marker');
+    // At the fitted test viewport, local lower-right (140, 84) becomes
+    // scale(2, .5) -> rotate(90deg) = (-42, 280), then adds origin (190, 132).
+    expect(Number.parseFloat(marker.style.left)).toBeCloseTo(151, 5);
+    expect(Number.parseFloat(marker.style.top)).toBeCloseTo(415, 5);
+  });
+
   // Mutation caught: committing whitespace or cancelling by Escape must not
   // route through addText/delete and leave an undo snapshot behind.
   it('leaves no text or history after blank and cancelled drafts', async () => {
