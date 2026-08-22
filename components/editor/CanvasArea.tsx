@@ -78,6 +78,15 @@ interface TextPointerGesture {
   end: { x: number; y: number };
 }
 
+interface BrushGestureSettings {
+  size: number;
+  hardness: number;
+  color: string;
+  opacity: number;
+  mode: NonNullable<StrokeData['mode']>;
+  purpose: NonNullable<StrokeData['purpose']>;
+}
+
 function scaleToFit(w: number, h: number, maxSide: number): number {
   return Math.min(1, maxSide / Math.max(w, h));
 }
@@ -1188,6 +1197,7 @@ export function CanvasArea() {
   const lastBrushPointRef = useRef<{ x: number; y: number } | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const activePointerTargetRef = useRef<HTMLElement | null>(null);
+  const brushGestureSettingsRef = useRef<BrushGestureSettings | null>(null);
   const textPointerGestureRef = useRef<TextPointerGesture | null>(null);
   const textPointerTargetRef = useRef<HTMLElement | null>(null);
   const textDraftFrameRef = useRef<number | null>(null);
@@ -1346,6 +1356,7 @@ export function CanvasArea() {
     pendingBrushPoints.current = [];
     livePoints.current = [];
     lastBrushPointRef.current = null;
+    brushGestureSettingsRef.current = null;
     if (activePointerIdRef.current !== null) {
       try { activePointerTargetRef.current?.releasePointerCapture(activePointerIdRef.current); } catch { /* already released */ }
     }
@@ -1449,8 +1460,9 @@ export function CanvasArea() {
       const vp = store.viewport;
       const docH = doc?.height ?? 1000;
       const ps = doc ? Math.min(1, 1800 / Math.max(doc.width, doc.height)) : 1;
-      const size = tool === 'blur' ? store.blurSettings.brushSize : store.cleanupSettings.brushSize;
-      const hardness = tool === 'blur' ? store.blurSettings.hardness : store.cleanupSettings.brushHardness;
+      const gestureSettings = isPainting.current ? brushGestureSettingsRef.current : null;
+      const size = tool === 'blur' ? store.blurSettings.brushSize : gestureSettings?.size ?? store.cleanupSettings.brushSize;
+      const hardness = tool === 'blur' ? store.blurSettings.hardness : gestureSettings?.hardness ?? store.cleanupSettings.brushHardness;
       const diameter = size * docH * ps * vp.scale;
       const { outer } = getBrushTipRadii(diameter, hardness);
       cursor.style.display = 'block';
@@ -1493,6 +1505,8 @@ export function CanvasArea() {
 
   const renderBrushPreviewSegment = (points: number[], skipFirstStamp: boolean) => {
     if ((activeTool !== 'brush' && activeTool !== 'maskBrush') || !activeDoc) return;
+    const gestureSettings = brushGestureSettingsRef.current;
+    if (!gestureSettings) return;
     const canvas = brushPreviewCanvasRef.current;
     const context = canvas?.getContext('2d');
     if (!canvas || !context) return;
@@ -1506,21 +1520,21 @@ export function CanvasArea() {
     const dirty = drawBrushStroke(raster.getContext('2d')!, {
       id: strokeId.current,
       points,
-      size: cleanupSettings.brushSize,
-      color: cleanupSettings.brushColor,
+      size: gestureSettings.size,
+      color: gestureSettings.color,
       opacity: 1,
-      hardness: cleanupSettings.brushHardness,
-      mode: 'paint',
-      purpose: activeTool === 'maskBrush' ? 'mask' : 'paint',
+      hardness: gestureSettings.hardness,
+      mode: gestureSettings.mode,
+      purpose: gestureSettings.purpose,
     }, imgW, imgH, {
-      color: activeTool === 'maskBrush' ? 'rgb(255, 128, 0)' : cleanupSettings.brushColor,
+      color: gestureSettings.purpose === 'mask' ? 'rgb(255, 128, 0)' : gestureSettings.color,
       compositeOperation: 'source-over',
       skipFirstStamp,
     });
     if (!dirty) return;
     context.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
     context.save();
-    context.globalAlpha *= cleanupSettings.brushOpacity;
+    context.globalAlpha *= gestureSettings.opacity;
     context.globalCompositeOperation = 'source-over';
     context.drawImage(
       raster,
@@ -1910,6 +1924,14 @@ export function CanvasArea() {
       if (!imagePoint?.inside) return;
       const imgX = imagePoint.x * imgW;
       const imgY = imagePoint.y * imgH;
+      brushGestureSettingsRef.current = {
+        size: cleanupSettings.brushSize,
+        hardness: cleanupSettings.brushHardness,
+        color: cleanupSettings.brushColor,
+        opacity: cleanupSettings.brushOpacity,
+        mode: activeTool === 'eraser' ? 'erase' : 'paint',
+        purpose: activeTool === 'maskBrush' ? 'mask' : 'paint',
+      };
       isPainting.current = true;
       activePointerIdRef.current = e.evt.pointerId;
       try {
@@ -1937,9 +1959,9 @@ export function CanvasArea() {
         // Eraser preview is a translucent marker — destination-out would visually
         // punch through the whole composite while drawing.
         line.stroke('rgba(140,140,150,0.55)');
-        line.opacity(cleanupSettings.brushOpacity);
+        line.opacity(brushGestureSettingsRef.current.opacity);
         line.globalCompositeOperation('source-over');
-        const previewDiameter = cleanupSettings.brushSize * activeDoc.height * previewScale;
+        const previewDiameter = brushGestureSettingsRef.current.size * activeDoc.height * previewScale;
         line.strokeWidth(previewDiameter);
         line.shadowColor('transparent');
         line.shadowBlur(0);
@@ -2119,21 +2141,22 @@ export function CanvasArea() {
     }
     if (isPainting.current && activeDoc) {
       const pts = [...currentStroke.current];
-      if (pts.length >= 2) {
+      const gestureSettings = brushGestureSettingsRef.current;
+      if (pts.length >= 2 && gestureSettings) {
         const stroke: StrokeData = {
           id: strokeId.current,
           points: pts,
-          size: cleanupSettings.brushSize,
-          color: cleanupSettings.brushColor,
-          opacity: cleanupSettings.brushOpacity,
-          hardness: cleanupSettings.brushHardness,
-          mode: activeTool === 'eraser' ? 'erase' : 'paint',
-          purpose: activeTool === 'maskBrush' ? 'mask' : 'paint',
+          size: gestureSettings.size,
+          color: gestureSettings.color,
+          opacity: gestureSettings.opacity,
+          hardness: gestureSettings.hardness,
+          mode: gestureSettings.mode,
+          purpose: gestureSettings.purpose,
         };
-        const editsMask = activeTool === 'maskBrush' || (activeTool === 'eraser' && activeDoc.selectedLayer?.type === 'mask');
+        const editsMask = gestureSettings.purpose === 'mask' || (gestureSettings.mode === 'erase' && activeDoc.selectedLayer?.type === 'mask');
         if (editsMask) {
           addMaskStroke(stroke);
-        } else if (activeTool === 'eraser') {
+        } else if (gestureSettings.mode === 'erase') {
           // The eraser is per-layer: it punches pixels out of the selected raster
           // layer (base by default) instead of drawing a global destination-out
           // stroke that would visually erase the whole composite.
@@ -2174,6 +2197,7 @@ export function CanvasArea() {
       currentStroke.current = [];
       pendingBrushPoints.current = [];
       lastBrushPointRef.current = null;
+      brushGestureSettingsRef.current = null;
       // Hide the live preview line (the committed stroke takes over)
       livePoints.current = [];
       clearBrushPreview();
@@ -2494,6 +2518,8 @@ export function CanvasArea() {
       </div>
     );
   }
+
+  const activeBrushGestureSettings = isPainting.current ? brushGestureSettingsRef.current : null;
 
   return (
     <div
@@ -2917,8 +2943,8 @@ export function CanvasArea() {
             <Line
               ref={liveLineRef}
               points={livePoints.current}
-              stroke={cleanupSettings.brushColor}
-              strokeWidth={activeDoc ? cleanupSettings.brushSize * activeDoc.height * previewScale : 10}
+              stroke={activeBrushGestureSettings?.color ?? cleanupSettings.brushColor}
+              strokeWidth={activeDoc ? (activeBrushGestureSettings?.size ?? cleanupSettings.brushSize) * activeDoc.height * previewScale : 10}
               lineCap="round"
               lineJoin="round"
               tension={0.3}
@@ -3119,12 +3145,12 @@ export function CanvasArea() {
       {(activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur') && (
         <BrushCursor
           ref={cursorRef}
-          diameterPx={(activeTool === 'blur' ? blurSettings.brushSize : cleanupSettings.brushSize)
+          diameterPx={(activeTool === 'blur' ? blurSettings.brushSize : activeBrushGestureSettings?.size ?? cleanupSettings.brushSize)
             * (activeDoc?.height ?? 1000) * previewScale * viewport.scale}
-          hardness={activeTool === 'blur' ? blurSettings.hardness : cleanupSettings.brushHardness}
+          hardness={activeTool === 'blur' ? blurSettings.hardness : activeBrushGestureSettings?.hardness ?? cleanupSettings.brushHardness}
           color={activeTool === 'maskBrush' ? '#ff8000'
             : activeTool === 'blur' ? '#5e9fe8'
-              : activeTool === 'eraser' ? '#ffffff' : cleanupSettings.brushColor}
+              : activeTool === 'eraser' ? '#ffffff' : activeBrushGestureSettings?.color ?? cleanupSettings.brushColor}
           showCrosshair
         />
       )}

@@ -152,6 +152,8 @@ describe('CanvasArea brush preview', () => {
     drawImage: ReturnType<typeof vi.fn>;
     drawAlphas: number[];
     globalAlpha: number;
+    fillStyle: string | CanvasGradient;
+    gradientStops: Array<[number, string]>;
   }>();
   let animationFrames: FrameRequestCallback[];
 
@@ -169,7 +171,8 @@ describe('CanvasArea brush preview', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function getContext(this: HTMLCanvasElement) {
       const existing = contexts.get(this);
       if (existing) return existing as unknown as CanvasRenderingContext2D;
-      const radialGradient = { addColorStop: vi.fn() };
+      const gradientStops: Array<[number, string]> = [];
+      const radialGradient = { addColorStop: (offset: number, color: string) => gradientStops.push([offset, color]) };
       const alphaStack: number[] = [];
       const context = {
         fillStyle: '',
@@ -186,6 +189,7 @@ describe('CanvasArea brush preview', () => {
         drawImage: vi.fn(() => context.drawAlphas.push(context.globalAlpha)),
         save: vi.fn(() => alphaStack.push(context.globalAlpha)),
         restore: vi.fn(() => { context.globalAlpha = alphaStack.pop() ?? 1; }),
+        gradientStops,
       };
       contexts.set(this, context);
       return context as unknown as CanvasRenderingContext2D;
@@ -302,6 +306,59 @@ describe('CanvasArea brush preview', () => {
     expect(overlay.dataset.hasPreview).toBe('false');
     expect(useStore.getState().documents[0].cleanup.strokes).toHaveLength(0);
     expect(useStore.getState().documents[1].cleanup.strokes).toHaveLength(0);
+  });
+
+  it('keeps pointerdown brush settings for preview, cursor, and commit', () => {
+    act(() => useStore.getState().updateCleanupSettings({
+      brushSize: 0.1,
+      brushHardness: 0.5,
+      brushOpacity: 0.6,
+      brushColor: '#123456',
+    }));
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('paint-canvas-stage');
+    const overlay = screen.getByTestId('brush-preview-overlay') as HTMLCanvasElement;
+
+    fireEvent.pointerDown(stage, { pointerId: 19, button: 0, clientX: 400, clientY: 300 });
+    const pointerdownCursorWidth = screen.getByTestId('brush-cursor').style.width;
+    const pointerdownHardCoreWidth = screen.getByTestId('brush-cursor-hard-core').style.width;
+    const pointerdownCursorColor = screen.getByTestId('brush-cursor-outer').style.borderColor;
+    const pointerdownDirtyWidth = contexts.get(overlay)!.clearRect.mock.calls[0][2] as number;
+    act(() => useStore.getState().updateCleanupSettings({
+      brushSize: 0.02,
+      brushHardness: 0.1,
+      brushOpacity: 0.2,
+      brushColor: '#abcdef',
+    }));
+
+    const cursor = screen.getByTestId('brush-cursor');
+    expect(cursor.style.width).toBe(pointerdownCursorWidth);
+    expect(screen.getByTestId('brush-cursor-hard-core').style.width).toBe(pointerdownHardCoreWidth);
+    expect(screen.getByTestId('brush-cursor-outer').style.borderColor).toBe(pointerdownCursorColor);
+    const documentAfterSettings = useStore.getState().documents[0];
+
+    fireEvent.pointerMove(stage, { pointerId: 19, clientX: 450, clientY: 300 });
+    act(() => animationFrames.shift()?.(16));
+
+    expect(useStore.getState().documents[0]).toBe(documentAfterSettings);
+    expect(contexts.get(overlay)?.drawAlphas).toEqual([0.6, 0.6]);
+    const previewDirtyWidth = contexts.get(overlay)!.clearRect.mock.calls.at(-1)![2] as number;
+    expect(previewDirtyWidth).toBeGreaterThan(pointerdownDirtyWidth * 1.5);
+    const rasterStamps = [...contexts.values()].filter(context => context.fillStyle === '#123456');
+    expect(rasterStamps).toHaveLength(1);
+    expect(rasterStamps[0].gradientStops).toContainEqual([0.5, 'rgba(255,255,255,1)']);
+    expect([...contexts.values()].some(context => context.fillStyle === '#abcdef')).toBe(false);
+
+    fireEvent.pointerUp(window, { pointerId: 19 });
+
+    expect(useStore.getState().documents[0].cleanup.strokes[0]).toMatchObject({
+      size: 0.1,
+      hardness: 0.5,
+      opacity: 0.6,
+      color: '#123456',
+      mode: 'paint',
+      purpose: 'paint',
+    });
   });
 });
 
