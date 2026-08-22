@@ -113,7 +113,8 @@ function samplePixel(canvas: PixelCanvas, x: number, y: number, radius: number) 
   const centerX = Math.max(0, Math.min(canvas.width - 1, Math.floor(x)));
   const centerY = Math.max(0, Math.min(canvas.height - 1, Math.floor(y)));
   if (radius <= 0) return canvas.getPixel(centerX, centerY);
-  const extent = Math.max(1, Math.round(radius));
+  // Model the browser filter's Gaussian support extending well beyond the CSS radius.
+  const extent = Math.max(1, Math.ceil(radius * 3));
   const totals = [0, 0, 0, 0];
   let count = 0;
   for (let offsetY = -extent; offsetY <= extent; offsetY += 1) {
@@ -186,13 +187,18 @@ describe('raster effect primitives', () => {
     expect(result.getPixel(4, 4)[3]).toBe(160);
   });
 
-  it('samples blur pixels from the expanded source rectangle', () => {
-    const source = makeCanvas(8, 4, x => [x < 3 ? 0 : 255, x < 3 ? 0 : 255, x < 3 ? 0 : 255, 190]);
-    const result = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 3, y: 1, width: 2, height: 2 }, 'blur', parameters) as unknown as PixelCanvas;
+  it('matches a full-layer blur crop when Gaussian support extends beyond the radius', () => {
+    const source = makeCanvas(12, 4, x => [x * 19, x * 13, x * 7, 190]);
+    const full = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 0, y: 0, width: 12, height: 4 }, 'blur', parameters) as unknown as PixelCanvas;
+    const partial = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 4, y: 1, width: 3, height: 2 }, 'blur', parameters) as unknown as PixelCanvas;
 
-    expect(result.width).toBe(2);
-    expect(result.height).toBe(2);
-    expect(result.getPixel(0, 0)).toEqual([170, 170, 170, 190]);
+    expect(partial.width).toBe(3);
+    expect(partial.height).toBe(2);
+    for (let y = 0; y < partial.height; y += 1) {
+      for (let x = 0; x < partial.width; x += 1) {
+        expect(partial.getPixel(x, y)).toEqual(full.getPixel(x + 4, y + 1));
+      }
+    }
   });
 
   it('pixelates to one RGBA value per anchored cell with smoothing disabled', () => {
@@ -222,6 +228,22 @@ describe('raster effect primitives', () => {
     }
   });
 
+  it('keeps absolute cell boundaries at a non-divisible layer edge', () => {
+    const source = makeCanvas(10, 2, x => [x * 20, x * 20, x * 20, 210]);
+    const result = renderRasterEffect(
+      source as unknown as HTMLCanvasElement,
+      { x: 0, y: 0, width: 10, height: 2 },
+      'pixelate',
+      { ...parameters, cellSize: 4 },
+    ) as unknown as PixelCanvas;
+
+    expect(result.getPixel(0, 0)).toEqual(result.getPixel(3, 0));
+    expect(result.getPixel(4, 0)).toEqual(result.getPixel(7, 0));
+    expect(result.getPixel(8, 0)).toEqual(result.getPixel(9, 0));
+    expect(result.getPixel(3, 0)).not.toEqual(result.getPixel(4, 0));
+    expect(result.getPixel(7, 0)).not.toEqual(result.getPixel(8, 0));
+  });
+
   it('renders byte-identical seeded noise without changing alpha', () => {
     const source = makeCanvas(8, 8, (x, y) => [80 + x * 3, 90 + y * 2, 120, 40 + (x + y) * 8]);
     const first = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 0, y: 0, width: 8, height: 8 }, 'noise', parameters) as unknown as PixelCanvas;
@@ -230,6 +252,18 @@ describe('raster effect primitives', () => {
     expect(first.pixels).toEqual(second.pixels);
     for (let y = 0; y < 8; y += 1) {
       for (let x = 0; x < 8; x += 1) expect(first.getPixel(x, y)[3]).toBe(source.getPixel(x, y)[3]);
+    }
+  });
+
+  it('keeps seeded noise stable at absolute coordinates across different bounds', () => {
+    const source = makeCanvas(8, 6, (x, y) => [100 + x, 110 + y, 120, 70 + x + y]);
+    const full = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 0, y: 0, width: 8, height: 6 }, 'noise', parameters) as unknown as PixelCanvas;
+    const partial = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 2, y: 1, width: 4, height: 3 }, 'noise', parameters) as unknown as PixelCanvas;
+
+    for (let y = 0; y < partial.height; y += 1) {
+      for (let x = 0; x < partial.width; x += 1) {
+        expect(partial.getPixel(x, y)).toEqual(full.getPixel(x + 2, y + 1));
+      }
     }
   });
 
@@ -242,6 +276,18 @@ describe('raster effect primitives', () => {
     expect(resultContrast).toBeGreaterThan(sourceContrast);
     for (let y = 0; y < 8; y += 1) {
       for (let x = 0; x < 8; x += 1) expect(result.getPixel(x, y)[3]).toBe(source.getPixel(x, y)[3]);
+    }
+  });
+
+  it('matches a full-layer sharpen crop by sampling neighboring source pixels', () => {
+    const source = makeCanvas(8, 6, (x, y) => [30 + x * 17 + y * 3, 40 + x * 9 + y * 11, 50 + x * 5 + y * 13, 90 + x + y]);
+    const full = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 0, y: 0, width: 8, height: 6 }, 'sharpen', parameters) as unknown as PixelCanvas;
+    const partial = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 2, y: 1, width: 4, height: 3 }, 'sharpen', parameters) as unknown as PixelCanvas;
+
+    for (let y = 0; y < partial.height; y += 1) {
+      for (let x = 0; x < partial.width; x += 1) {
+        expect(partial.getPixel(x, y)).toEqual(full.getPixel(x + 2, y + 1));
+      }
     }
   });
 });

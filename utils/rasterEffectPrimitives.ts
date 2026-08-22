@@ -65,7 +65,8 @@ function writeMixedPixels(
 }
 
 function renderBlur(source: HTMLCanvasElement, bounds: RasterEffectBounds, radius: number) {
-  const expandedBounds = expandEffectBounds(bounds, radius, source.width, source.height);
+  const blurRadius = Math.max(0, finiteOr(radius, 0));
+  const expandedBounds = expandEffectBounds(bounds, blurRadius * 3, source.width, source.height);
   const expandedSource = createCanvas(expandedBounds.width, expandedBounds.height);
   context2d(expandedSource).drawImage(
     source,
@@ -80,7 +81,7 @@ function renderBlur(source: HTMLCanvasElement, bounds: RasterEffectBounds, radiu
   );
   const expandedEffect = createCanvas(expandedBounds.width, expandedBounds.height);
   const context = context2d(expandedEffect);
-  context.filter = `blur(${Math.max(0, finiteOr(radius, 0))}px)`;
+  context.filter = `blur(${blurRadius}px)`;
   context.drawImage(expandedSource, 0, 0);
   const output = createCanvas(bounds.width, bounds.height);
   context2d(output).drawImage(
@@ -105,31 +106,22 @@ function renderPixelate(
 ) {
   const cell = Math.max(1, Math.round(finiteOr(cellSize, 1)));
   const alignedBounds = pixelateBounds(bounds, cell, source.width, source.height);
-  const alignedSource = createCanvas(alignedBounds.width, alignedBounds.height);
-  context2d(alignedSource).drawImage(
-    source,
-    alignedBounds.x,
-    alignedBounds.y,
-    alignedBounds.width,
-    alignedBounds.height,
-    0,
-    0,
-    alignedBounds.width,
-    alignedBounds.height,
-  );
-
-  const reduced = createCanvas(
-    Math.max(1, Math.ceil(alignedBounds.width / cell)),
-    Math.max(1, Math.ceil(alignedBounds.height / cell)),
-  );
-  const reducedContext = context2d(reduced);
-  reducedContext.imageSmoothingEnabled = false;
-  reducedContext.drawImage(alignedSource, 0, 0, alignedSource.width, alignedSource.height, 0, 0, reduced.width, reduced.height);
-
   const alignedEffect = createCanvas(alignedBounds.width, alignedBounds.height);
   const alignedContext = context2d(alignedEffect);
   alignedContext.imageSmoothingEnabled = false;
-  alignedContext.drawImage(reduced, 0, 0, reduced.width, reduced.height, 0, 0, alignedEffect.width, alignedEffect.height);
+  const sample = createCanvas(1, 1);
+  for (let y = alignedBounds.y; y < alignedBounds.y + alignedBounds.height; y += cell) {
+    const cellHeight = Math.min(cell, source.height - y);
+    for (let x = alignedBounds.x; x < alignedBounds.x + alignedBounds.width; x += cell) {
+      const cellWidth = Math.min(cell, source.width - x);
+      sample.width = 1;
+      sample.height = 1;
+      const sampleContext = context2d(sample);
+      sampleContext.imageSmoothingEnabled = false;
+      sampleContext.drawImage(source, x, y, cellWidth, cellHeight, 0, 0, 1, 1);
+      alignedContext.drawImage(sample, 0, 0, 1, 1, x - alignedBounds.x, y - alignedBounds.y, cellWidth, cellHeight);
+    }
+  }
 
   const output = createCanvas(sourceBounds.width, sourceBounds.height);
   const outputContext = context2d(output);
@@ -148,43 +140,68 @@ function renderPixelate(
   return output;
 }
 
-function renderNoise(source: HTMLCanvasElement, parameters: RasterEffectParameters) {
+function coordinateRandom(seed: number, x: number, y: number, channel: number) {
+  const coordinateSeed = (finiteOr(seed, 0) >>> 0)
+    ^ Math.imul(x, 0x9e3779b1)
+    ^ Math.imul(y, 0x85ebca6b)
+    ^ Math.imul(channel + 1, 0xc2b2ae35);
+  return createSeededRandom(coordinateSeed)();
+}
+
+function renderNoise(source: HTMLCanvasElement, bounds: RasterEffectBounds, parameters: RasterEffectParameters) {
   const output = createCanvas(source.width, source.height);
   const context = context2d(output, true);
   const pixels = readPixels(source);
   const result = context.createImageData(source.width, source.height);
   result.data.set(pixels.data);
-  const random = createSeededRandom(finiteOr(parameters.seed, 0));
   const amount = clamp(finiteOr(parameters.noiseAmount, 0), 0, 1) * 255;
-  for (let index = 0; index < result.data.length; index += 4) {
-    if (parameters.noiseMonochrome) {
-      const noise = (random() * 2 - 1) * amount;
-      result.data[index] += noise;
-      result.data[index + 1] += noise;
-      result.data[index + 2] += noise;
-    } else {
-      result.data[index] += (random() * 2 - 1) * amount;
-      result.data[index + 1] += (random() * 2 - 1) * amount;
-      result.data[index + 2] += (random() * 2 - 1) * amount;
+  for (let y = 0; y < source.height; y += 1) {
+    for (let x = 0; x < source.width; x += 1) {
+      const index = (y * source.width + x) * 4;
+      const absoluteX = bounds.x + x;
+      const absoluteY = bounds.y + y;
+      if (parameters.noiseMonochrome) {
+        const noise = (coordinateRandom(parameters.seed, absoluteX, absoluteY, 0) * 2 - 1) * amount;
+        result.data[index] += noise;
+        result.data[index + 1] += noise;
+        result.data[index + 2] += noise;
+      } else {
+        result.data[index] += (coordinateRandom(parameters.seed, absoluteX, absoluteY, 0) * 2 - 1) * amount;
+        result.data[index + 1] += (coordinateRandom(parameters.seed, absoluteX, absoluteY, 1) * 2 - 1) * amount;
+        result.data[index + 2] += (coordinateRandom(parameters.seed, absoluteX, absoluteY, 2) * 2 - 1) * amount;
+      }
     }
   }
   context.putImageData(result, 0, 0);
   return output;
 }
 
-function renderSharpen(source: HTMLCanvasElement) {
-  const output = createCanvas(source.width, source.height);
-  const context = context2d(output, true);
-  const pixels = readPixels(source);
-  const result = context.createImageData(source.width, source.height);
+function renderSharpen(source: HTMLCanvasElement, bounds: RasterEffectBounds) {
+  const expandedBounds = expandEffectBounds(bounds, 1, source.width, source.height);
+  const expandedSource = createCanvas(expandedBounds.width, expandedBounds.height);
+  context2d(expandedSource).drawImage(
+    source,
+    expandedBounds.x,
+    expandedBounds.y,
+    expandedBounds.width,
+    expandedBounds.height,
+    0,
+    0,
+    expandedSource.width,
+    expandedSource.height,
+  );
+  const expandedEffect = createCanvas(expandedSource.width, expandedSource.height);
+  const context = context2d(expandedEffect, true);
+  const pixels = readPixels(expandedSource);
+  const result = context.createImageData(expandedSource.width, expandedSource.height);
   const sample = (x: number, y: number, channel: number) => {
-    const column = clamp(x, 0, source.width - 1);
-    const row = clamp(y, 0, source.height - 1);
-    return pixels.data[(row * source.width + column) * 4 + channel];
+    const column = clamp(x, 0, expandedSource.width - 1);
+    const row = clamp(y, 0, expandedSource.height - 1);
+    return pixels.data[(row * expandedSource.width + column) * 4 + channel];
   };
-  for (let y = 0; y < source.height; y += 1) {
-    for (let x = 0; x < source.width; x += 1) {
-      const index = (y * source.width + x) * 4;
+  for (let y = 0; y < expandedSource.height; y += 1) {
+    for (let x = 0; x < expandedSource.width; x += 1) {
+      const index = (y * expandedSource.width + x) * 4;
       for (let channel = 0; channel < 3; channel += 1) {
         result.data[index + channel] = sample(x, y, channel) * 5
           - sample(x - 1, y, channel)
@@ -196,6 +213,18 @@ function renderSharpen(source: HTMLCanvasElement) {
     }
   }
   context.putImageData(result, 0, 0);
+  const output = createCanvas(bounds.width, bounds.height);
+  context2d(output).drawImage(
+    expandedEffect,
+    bounds.x - expandedBounds.x,
+    bounds.y - expandedBounds.y,
+    bounds.width,
+    bounds.height,
+    0,
+    0,
+    output.width,
+    output.height,
+  );
   return output;
 }
 
@@ -268,8 +297,8 @@ export function renderRasterEffect(
   let effected: HTMLCanvasElement;
   if (mode === 'blur') effected = renderBlur(source, sourceBounds, parameters.radius);
   else if (mode === 'pixelate') effected = renderPixelate(source, sourceBounds, sourceBounds, parameters.cellSize);
-  else if (mode === 'noise') effected = renderNoise(sourcePatch, parameters);
-  else effected = renderSharpen(sourcePatch);
+  else if (mode === 'noise') effected = renderNoise(sourcePatch, sourceBounds, parameters);
+  else effected = renderSharpen(source, sourceBounds);
 
   const output = createCanvas(sourcePatch.width, sourcePatch.height);
   if (mode === 'pixelate') context2d(output).imageSmoothingEnabled = false;
