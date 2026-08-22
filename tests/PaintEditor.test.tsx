@@ -150,6 +150,8 @@ describe('CanvasArea brush preview', () => {
   const contexts = new Map<HTMLCanvasElement, {
     clearRect: ReturnType<typeof vi.fn>;
     drawImage: ReturnType<typeof vi.fn>;
+    drawAlphas: number[];
+    globalAlpha: number;
   }>();
   let animationFrames: FrameRequestCallback[];
 
@@ -168,6 +170,7 @@ describe('CanvasArea brush preview', () => {
       const existing = contexts.get(this);
       if (existing) return existing as unknown as CanvasRenderingContext2D;
       const radialGradient = { addColorStop: vi.fn() };
+      const alphaStack: number[] = [];
       const context = {
         fillStyle: '',
         strokeStyle: '',
@@ -179,9 +182,10 @@ describe('CanvasArea brush preview', () => {
         beginPath: vi.fn(),
         arc: vi.fn(),
         fill: vi.fn(),
-        drawImage: vi.fn(),
-        save: vi.fn(),
-        restore: vi.fn(),
+        drawAlphas: [] as number[],
+        drawImage: vi.fn(() => context.drawAlphas.push(context.globalAlpha)),
+        save: vi.fn(() => alphaStack.push(context.globalAlpha)),
+        restore: vi.fn(() => { context.globalAlpha = alphaStack.pop() ?? 1; }),
       };
       contexts.set(this, context);
       return context as unknown as CanvasRenderingContext2D;
@@ -218,6 +222,8 @@ describe('CanvasArea brush preview', () => {
 
     fireEvent.pointerDown(stage, { pointerId: 7, button: 0, clientX: 400, clientY: 300 });
     expect(stageHarness.setPointerCapture).toHaveBeenCalledWith(7);
+    expect(contexts.get(overlay)?.drawImage).toHaveBeenCalledTimes(1);
+    expect(overlay.dataset.hasPreview).toBe('true');
 
     const move = new MouseEvent('pointermove', { bubbles: true, clientX: 456, clientY: 300 });
     Object.defineProperty(move, 'pointerId', { value: 7 });
@@ -231,22 +237,71 @@ describe('CanvasArea brush preview', () => {
 
     expect(animationFrames).toHaveLength(1);
     expect(useStore.getState().documents[0]).toBe(before);
-    expect(contexts.has(overlay)).toBe(false);
+    expect(contexts.get(overlay)?.drawImage).toHaveBeenCalledTimes(1);
 
     act(() => animationFrames.shift()?.(0));
 
-    expect(contexts.get(overlay)?.clearRect).toHaveBeenCalledTimes(1);
-    expect(contexts.get(overlay)?.drawImage).toHaveBeenCalledTimes(1);
+    expect(contexts.get(overlay)?.drawImage).toHaveBeenCalledTimes(2);
     expect(overlay.dataset.hasPreview).toBe('true');
     expect(useStore.getState().documents[0]).toBe(before);
+    const firstFlushClear = contexts.get(overlay)!.clearRect.mock.calls.at(-1)!;
+
+    const secondMove = new MouseEvent('pointermove', { bubbles: true, clientX: 476, clientY: 300 });
+    Object.defineProperty(secondMove, 'pointerId', { value: 7 });
+    Object.defineProperty(secondMove, 'getCoalescedEvents', {
+      value: () => [{ clientX: 476, clientY: 300 }],
+    });
+    stage.dispatchEvent(secondMove);
+    expect(animationFrames).toHaveLength(1);
+
+    act(() => animationFrames.shift()?.(16));
+
+    const overlayContext = contexts.get(overlay)!;
+    expect(overlayContext.drawImage).toHaveBeenCalledTimes(3);
+    expect(overlayContext.drawAlphas).toEqual([0.6, 0.6, 0.6]);
+    const secondFlushClear = overlayContext.clearRect.mock.calls.at(-1)!;
+    expect(secondFlushClear).not.toEqual([0, 0, overlay.width, overlay.height]);
+    expect(secondFlushClear[0]).toBeGreaterThan(0);
+    expect(secondFlushClear[2]).toBeLessThan(firstFlushClear[2]);
+    const accumulatedRaster = overlayContext.drawImage.mock.calls[0][0] as HTMLCanvasElement;
+    expect(overlayContext.drawImage.mock.calls.every(call => call[0] === accumulatedRaster && call.length === 9)).toBe(true);
+    expect(contexts.get(accumulatedRaster)?.drawAlphas).toEqual([1, 1, 1]);
 
     fireEvent.pointerUp(window, { pointerId: 7 });
     const overlayAfterCommit = screen.getByTestId('brush-preview-overlay') as HTMLCanvasElement;
     expect(stageHarness.releasePointerCapture).toHaveBeenCalledWith(7);
-    expect(useStore.getState().documents[0].cleanup.strokes[0].points).toHaveLength(6);
+    expect(useStore.getState().documents[0].cleanup.strokes[0].points).toHaveLength(8);
     expect(overlayAfterCommit).toBe(overlay);
     expect(overlayAfterCommit.dataset.hasPreview).toBe('false');
-    expect(contexts.get(overlayAfterCommit)?.clearRect).toHaveBeenCalledTimes(2);
+    expect(contexts.get(overlayAfterCommit)?.clearRect).toHaveBeenLastCalledWith(0, 0, overlay.width, overlay.height);
+  });
+
+  it('cancels an in-flight brush preview when the active document changes', () => {
+    const first = makeEditorDocument({ id: 'first-doc', width: 1000, height: 1000 });
+    const second = makeEditorDocument({ id: 'second-doc', width: 1000, height: 1000 });
+    useStore.setState({ documents: [first, second], activeDocIndex: 0 });
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('paint-canvas-stage');
+    const overlay = screen.getByTestId('brush-preview-overlay') as HTMLCanvasElement;
+
+    fireEvent.pointerDown(stage, { pointerId: 11, button: 0, clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(stage, { pointerId: 11, clientX: 440, clientY: 300 });
+    expect(animationFrames).toHaveLength(1);
+    expect(overlay.dataset.hasPreview).toBe('true');
+    const staleFrame = animationFrames[0];
+
+    act(() => useStore.getState().setActiveDoc(1));
+
+    expect(window.cancelAnimationFrame).toHaveBeenCalledWith(1);
+    expect(stageHarness.releasePointerCapture).toHaveBeenCalledWith(11);
+    expect(overlay.dataset.hasPreview).toBe('false');
+
+    act(() => staleFrame(16));
+    fireEvent.pointerUp(window, { pointerId: 11 });
+
+    expect(overlay.dataset.hasPreview).toBe('false');
+    expect(useStore.getState().documents[0].cleanup.strokes).toHaveLength(0);
+    expect(useStore.getState().documents[1].cleanup.strokes).toHaveLength(0);
   });
 });
 

@@ -73,5 +73,22 @@ describe('brush tip geometry', () => {
     expect(contexts[0].stops).toContainEqual([0.5, 'rgba(255,255,255,1)']);
     // 600px / 8px = 75 interpolated stamps, plus the starting stamp.
     expect(contexts[1].drawImage).toHaveBeenCalledTimes(76);
+
+    const contextCount = contexts.length;
+    drawBrushStroke(target, {
+      id: 'near-hard-tip',
+      points: [0.5, 0.5],
+      size: 0.08,
+      color: 'rgb(9, 8, 7)',
+      opacity: 1,
+      hardness: 0.999,
+      mode: 'paint',
+      purpose: 'paint',
+    }, 1000, 1000);
+
+    // Near-hard tips remain a narrow real gradient. The cursor's 99.9% hard
+    // core must not abruptly turn into a fully-hard raster disk.
+    expect(contexts[contextCount].radialArgs).not.toHaveLength(0);
+    expect(contexts[contextCount].stops[1][0]).toBeCloseTo(0.999, 10);
   });
 });

@@ -1218,6 +1218,8 @@ export function CanvasArea() {
   // Brush cursor updated imperatively via DOM
   const cursorRef = useRef<HTMLDivElement>(null);
   const brushPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const brushPreviewRasterRef = useRef<HTMLCanvasElement | null>(null);
+  const lastPreviewPointRef = useRef<{ x: number; y: number } | null>(null);
   const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
@@ -1326,9 +1328,32 @@ export function CanvasArea() {
 
   const clearBrushPreview = () => {
     const canvas = brushPreviewCanvasRef.current;
-    if (!canvas || canvas.dataset.hasPreview !== 'true') return;
-    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
-    canvas.dataset.hasPreview = 'false';
+    if (canvas?.dataset.hasPreview === 'true') {
+      canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+      canvas.dataset.hasPreview = 'false';
+    }
+    brushPreviewRasterRef.current = null;
+    lastPreviewPointRef.current = null;
+  };
+
+  const cancelBrushGesture = () => {
+    if (brushFrameRef.current !== null) {
+      window.cancelAnimationFrame(brushFrameRef.current);
+      brushFrameRef.current = null;
+    }
+    isPainting.current = false;
+    currentStroke.current = [];
+    pendingBrushPoints.current = [];
+    livePoints.current = [];
+    lastBrushPointRef.current = null;
+    if (activePointerIdRef.current !== null) {
+      try { activePointerTargetRef.current?.releasePointerCapture(activePointerIdRef.current); } catch { /* already released */ }
+    }
+    activePointerIdRef.current = null;
+    activePointerTargetRef.current = null;
+    clearBrushPreview();
+    liveLineRef.current?.setAttrs({ points: [], visible: false });
+    liveLineRef.current?.getLayer()?.batchDraw();
   };
 
   const finishPolyLasso = useCallback((mode: 'replace' | 'add' | 'subtract') => {
@@ -1350,40 +1375,28 @@ export function CanvasArea() {
   // Every tool switch must remove imperative preview graphics. These nodes
   // live only in the editor overlay and are never serialized into layer pixels.
   useEffect(() => {
-    isPainting.current = false;
+    cancelBrushGesture();
     isEffectPainting.current = false;
     effectPointsRef.current = [];
-    currentStroke.current = [];
-    pendingBrushPoints.current = [];
-    livePoints.current = [];
     isLassoing.current = false;
     lassoPoints.current = [];
     isRectSelecting.current = false;
-    liveLineRef.current?.setAttrs({ points: [], visible: false });
     liveLassoRef.current?.setAttrs({ points: [], visible: false });
     liveRectRef.current?.setAttrs({ visible: false });
-    clearBrushPreview();
-    liveLineRef.current?.getLayer()?.batchDraw();
     liveLassoRef.current?.getLayer()?.batchDraw();
   }, [activeTool]);
 
   useEffect(() => {
     const cancelTransient = () => {
       cancelPolyLasso();
-      isPainting.current = false;
+      cancelBrushGesture();
       isEffectPainting.current = false;
       effectPointsRef.current = [];
-      currentStroke.current = [];
-      pendingBrushPoints.current = [];
-      livePoints.current = [];
       isLassoing.current = false;
       lassoPoints.current = [];
       isRectSelecting.current = false;
-      liveLineRef.current?.setAttrs({ points: [], visible: false });
       liveLassoRef.current?.setAttrs({ points: [], visible: false });
       liveRectRef.current?.setAttrs({ visible: false });
-      clearBrushPreview();
-      liveLineRef.current?.getLayer()?.batchDraw();
       liveLassoRef.current?.getLayer()?.batchDraw();
     };
     window.addEventListener('manga-editor-cancel-transient', cancelTransient);
@@ -1391,7 +1404,7 @@ export function CanvasArea() {
   }, [cancelPolyLasso]);
   useEffect(() => {
     cancelPolyLasso();
-    clearBrushPreview();
+    cancelBrushGesture();
   }, [activeDocIndex, cancelPolyLasso]);
 
   // Fit to screen
@@ -1478,10 +1491,51 @@ export function CanvasArea() {
   const panStart = useRef({ x: 0, y: 0 });
   const panVpStart = useRef({ x: 0, y: 0 });
 
+  const renderBrushPreviewSegment = (points: number[], skipFirstStamp: boolean) => {
+    if ((activeTool !== 'brush' && activeTool !== 'maskBrush') || !activeDoc) return;
+    const canvas = brushPreviewCanvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context) return;
+    let raster = brushPreviewRasterRef.current;
+    if (!raster || raster.width !== canvas.width || raster.height !== canvas.height) {
+      raster = document.createElement('canvas');
+      raster.width = canvas.width;
+      raster.height = canvas.height;
+      brushPreviewRasterRef.current = raster;
+    }
+    const dirty = drawBrushStroke(raster.getContext('2d')!, {
+      id: strokeId.current,
+      points,
+      size: cleanupSettings.brushSize,
+      color: cleanupSettings.brushColor,
+      opacity: 1,
+      hardness: cleanupSettings.brushHardness,
+      mode: 'paint',
+      purpose: activeTool === 'maskBrush' ? 'mask' : 'paint',
+    }, imgW, imgH, {
+      color: activeTool === 'maskBrush' ? 'rgb(255, 128, 0)' : cleanupSettings.brushColor,
+      compositeOperation: 'source-over',
+      skipFirstStamp,
+    });
+    if (!dirty) return;
+    context.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
+    context.save();
+    context.globalAlpha *= cleanupSettings.brushOpacity;
+    context.globalCompositeOperation = 'source-over';
+    context.drawImage(
+      raster,
+      dirty.x, dirty.y, dirty.width, dirty.height,
+      dirty.x, dirty.y, dirty.width, dirty.height,
+    );
+    context.restore();
+    canvas.dataset.hasPreview = 'true';
+  };
+
   const flushBrushPreview = () => {
     brushFrameRef.current = null;
     const pending = pendingBrushPoints.current;
     if (!pending.length) return;
+    const previousPreviewPoint = lastPreviewPointRef.current;
     for (let index = 0; index < pending.length; index += 2) {
       const x = pending[index];
       const y = pending[index + 1];
@@ -1490,25 +1544,14 @@ export function CanvasArea() {
     }
     pendingBrushPoints.current = [];
     if ((activeTool === 'brush' || activeTool === 'maskBrush') && activeDoc) {
-      const canvas = brushPreviewCanvasRef.current;
-      const context = canvas?.getContext('2d');
-      if (canvas && context) {
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        drawBrushStroke(context, {
-          id: strokeId.current,
-          points: currentStroke.current,
-          size: cleanupSettings.brushSize,
-          color: cleanupSettings.brushColor,
-          opacity: cleanupSettings.brushOpacity,
-          hardness: cleanupSettings.brushHardness,
-          mode: 'paint',
-          purpose: activeTool === 'maskBrush' ? 'mask' : 'paint',
-        }, imgW, imgH, {
-          color: activeTool === 'maskBrush' ? 'rgb(255, 128, 0)' : cleanupSettings.brushColor,
-          compositeOperation: 'source-over',
-        });
-        canvas.dataset.hasPreview = 'true';
-      }
+      const segment = previousPreviewPoint
+        ? [previousPreviewPoint.x, previousPreviewPoint.y, ...pending]
+        : [...pending];
+      renderBrushPreviewSegment(segment, Boolean(previousPreviewPoint));
+      lastPreviewPointRef.current = {
+        x: pending[pending.length - 2],
+        y: pending[pending.length - 1],
+      };
       return;
     }
     const line = liveLineRef.current;
@@ -1878,6 +1921,7 @@ export function CanvasArea() {
       currentStroke.current = [imagePoint.x, imagePoint.y];
       pendingBrushPoints.current = [];
       lastBrushPointRef.current = { x: imagePoint.x, y: imagePoint.y };
+      lastPreviewPointRef.current = { x: imagePoint.x, y: imagePoint.y };
       // Eraser still uses a neutral marker; brush and mask preview their real
       // raster stamps on the DOM canvas above the document.
       livePoints.current = [imgX, imgY];
@@ -1886,6 +1930,7 @@ export function CanvasArea() {
         if (activeTool === 'brush' || activeTool === 'maskBrush') {
           line.setAttrs({ points: [], visible: false, shadowBlur: 0 });
           line.getLayer()?.batchDraw();
+          renderBrushPreviewSegment([imagePoint.x, imagePoint.y], false);
           return;
         }
         line.points(livePoints.current);

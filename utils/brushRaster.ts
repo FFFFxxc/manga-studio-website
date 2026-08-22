@@ -15,14 +15,14 @@ function getBrushStamp(diameter: number, hardness: number, color: string) {
   const ctx = canvas.getContext('2d')!;
   const center = canvas.width / 2;
   const { outer, hard } = getBrushTipRadii(diameter, normalizedHardness);
-  if (normalizedHardness >= 0.995) {
+  if (normalizedHardness >= 1) {
     ctx.fillStyle = 'rgba(255,255,255,1)';
     ctx.beginPath();
     ctx.arc(center, center, outer, 0, Math.PI * 2);
     ctx.fill();
   } else {
     const gradient = ctx.createRadialGradient(center, center, 0, center, center, outer);
-    const solidStop = Math.max(0, Math.min(0.98, hard / outer));
+    const solidStop = Math.max(0, Math.min(1, hard / outer));
     gradient.addColorStop(0, 'rgba(255,255,255,1)');
     gradient.addColorStop(solidStop, 'rgba(255,255,255,1)');
     gradient.addColorStop(1, 'rgba(255,255,255,0)');
@@ -44,9 +44,13 @@ export function drawBrushStroke(
   stroke: StrokeData,
   width: number,
   height: number,
-  options: { color?: string; compositeOperation?: GlobalCompositeOperation } = {},
+  options: {
+    color?: string;
+    compositeOperation?: GlobalCompositeOperation;
+    skipFirstStamp?: boolean;
+  } = {},
 ) {
-  if (stroke.points.length < 2) return;
+  if (stroke.points.length < 2) return null;
   const diameter = Math.max(1, stroke.size * height);
   const hardness = stroke.hardness ?? 1;
   const color = options.color ?? stroke.color;
@@ -75,14 +79,14 @@ export function drawBrushStroke(
   const maxY = Math.min(height, Math.ceil(bottom + radiusY));
   const strokeWidth = Math.max(0, Math.ceil(maxX - minX));
   const strokeHeight = Math.max(0, Math.ceil(maxY - minY));
-  if (strokeWidth === 0 || strokeHeight === 0) return;
+  if (strokeWidth === 0 || strokeHeight === 0) return null;
 
   const strokeCanvas = document.createElement('canvas');
   strokeCanvas.width = strokeWidth;
   strokeCanvas.height = strokeHeight;
   const strokeCtx = strokeCanvas.getContext('2d')!;
   const stampAt = (x: number, y: number) => strokeCtx.drawImage(stamp, x - minX - radiusX, y - minY - radiusY);
-  stampAt(points[0].x, points[0].y);
+  if (!options.skipFirstStamp) stampAt(points[0].x, points[0].y);
   for (let index = 1; index < points.length; index++) {
     const from = points[index - 1];
     const to = points[index];
@@ -99,4 +103,5 @@ export function drawBrushStroke(
   ctx.globalCompositeOperation = options.compositeOperation ?? (stroke.mode === 'erase' ? 'destination-out' : 'source-over');
   ctx.drawImage(strokeCanvas, minX, minY);
   ctx.restore();
+  return { x: minX, y: minY, width: strokeWidth, height: strokeHeight };
 }
