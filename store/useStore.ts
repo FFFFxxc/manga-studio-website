@@ -259,6 +259,7 @@ export interface AppState {
   deleteMask: (id: string) => void;
   addAiLayer: (documentId: string, layer: AiRasterLayer) => void;
   updateAiLayer: (id: string, updates: Partial<Omit<AiRasterLayer, 'id' | 'operation'>>, options?: { history?: boolean }) => void;
+  commitBaseRasterEffect: (dataUrl: string) => void;
   updateAiLayerPerspective: (id: string, quad: PerspectiveQuad | null, options?: { history?: boolean }) => void;
   deleteAiLayer: (id: string) => void;
   duplicateAiLayer: (id: string) => void;
@@ -702,6 +703,24 @@ export const useStore = create<AppState>((set, get) => ({
     const doc = options?.history === false ? { ...current, hasChanges: true } : withHistory(current);
     docs[state.activeDocIndex] = { ...doc, aiLayers: doc.aiLayers.map(layer => layer.id === id ? { ...layer, ...allowedUpdates } : layer) };
     return { documents: docs };
+  }),
+
+  commitBaseRasterEffect: dataUrl => set(state => {
+    if (state.activeDocIndex < 0) return {};
+    const documents = [...state.documents];
+    const current = documents[state.activeDocIndex];
+    const document = withHistory(current);
+    const baseLayer = document.baseLayer ?? createBaseLayerState(document.id);
+    documents[state.activeDocIndex] = {
+      ...document,
+      cleanup: { ...document.cleanup, committed: dataUrl },
+      baseLayer: {
+        ...baseLayer,
+        adjustments: { brightness: 1, contrast: 1, saturation: 1 },
+        eraseElements: [],
+      },
+    };
+    return { documents };
   }),
 
   updateAiLayerPerspective: (id, quad, options) => set(state => {

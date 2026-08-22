@@ -15,7 +15,17 @@ export interface PixelRect { x: number; y: number; width: number; height: number
 
 type CanvasSurface = HTMLCanvasElement | OffscreenCanvas;
 type CanvasFactory = (width: number, height: number) => CanvasSurface;
-type RasterTarget = { type: 'base'; id: string } | { type: 'ai'; id: string };
+export type RasterEffectTarget = { type: 'base'; id: string } | { type: 'ai'; id: string };
+type RasterTarget = RasterEffectTarget;
+
+export interface RasterEffectPreview {
+  /** Full target-layer replacement at preview scale. Render it in the target's z-order slot. */
+  canvas: CanvasImageSource;
+  /** The portion of the replacement that changed since the previous preview. */
+  bounds: PixelRect;
+  target: RasterEffectTarget;
+  opacity: number;
+}
 
 export interface RasterEffectSessionOptions {
   documentId: string;
@@ -27,7 +37,7 @@ export interface RasterEffectSessionOptions {
 
 export interface RasterEffectSession {
   append(points: number[]): void;
-  renderPreview(): Promise<{ canvas: CanvasImageSource; bounds: PixelRect } | null>;
+  renderPreview(): Promise<RasterEffectPreview | null>;
   commit(): Promise<string>;
   cancel(): void;
 }
@@ -293,13 +303,6 @@ async function canvasToDataUrl(canvas: CanvasSurface) {
   });
 }
 
-function effectLayerName(mode: RasterEffectMode) {
-  if (mode === 'pixelate') return 'Пикселизация';
-  if (mode === 'noise') return 'Шум';
-  if (mode === 'sharpen') return 'Резкость';
-  return 'Размытие';
-}
-
 export async function createRasterEffectSession(options: RasterEffectSessionOptions): Promise<RasterEffectSession> {
   const state = useStore.getState();
   const activeDocument = state.documents[state.activeDocIndex];
@@ -350,6 +353,8 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   let committedId: string | null = null;
   let commitStarted = false;
   let previewSource: CanvasSurface | null = null;
+  let previewComposite: CanvasSurface | null = null;
+  const targetOpacity = resolved.layer.opacity;
 
   const renderCompositeAtScale = async (documentBounds: PixelRect, scale: number) => {
     const width = Math.max(1, Math.round(activeDocument.width * scale));
@@ -405,7 +410,22 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
       if (cancelled || committedId || commitStarted || !pendingPreviewBounds) return null;
       const bounds = pendingPreviewBounds;
       pendingPreviewBounds = null;
-      return renderCompositeAtScale(bounds, previewScale);
+      const rendered = await renderCompositeAtScale(bounds, previewScale);
+      if (!rendered) return null;
+      const width = Math.max(1, Math.round(activeDocument.width * previewScale));
+      const height = Math.max(1, Math.round(activeDocument.height * previewScale));
+      const replacement = previewComposite
+        ?? (previewComposite = copyCanvas(previewSource ?? source, width, height, factory));
+      const replacementPixels = context2d(rendered.canvas, true).getImageData(
+        0, 0, rendered.bounds.width, rendered.bounds.height,
+      );
+      context2d(replacement).putImageData(replacementPixels, rendered.bounds.x, rendered.bounds.y);
+      return {
+        canvas: replacement,
+        bounds: rendered.bounds,
+        target: { ...target },
+        opacity: targetOpacity,
+      };
     },
 
     async commit() {
@@ -459,25 +479,8 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
           }, { history: false });
           committedId = target.id;
         } else {
-          const id = `ai-effect-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-          commitState.addAiLayer(activeDocument.id, {
-            id,
-            name: effectLayerName(settings.mode as RasterEffectMode),
-            src,
-            visible: true,
-            opacity: activeDocument.baseLayer.opacity,
-            operation: 'effect',
-            replacesBase: true,
-            locked: false,
-            eraseElements: [],
-            crop: null,
-            x: 0,
-            y: 0,
-            scaleX: 1,
-            scaleY: 1,
-            rotation: 0,
-          });
-          committedId = id;
+          commitState.commitBaseRasterEffect(src);
+          committedId = target.id;
         }
         return committedId;
       } catch (error) {

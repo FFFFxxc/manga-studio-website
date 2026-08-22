@@ -204,6 +204,9 @@ describe('raster effect stroke session', () => {
 
     expect(useStore.getState().documents[0]).toBe(before);
     expect(preview?.bounds).toEqual({ x: 5, y: 6, width: 10, height: 12 });
+    expect(preview?.canvas).toMatchObject({ width: 50, height: 40 });
+    expect(preview?.target).toEqual({ type: 'ai', id: 'drawing-layer' });
+    expect(preview?.opacity).toBe(1);
   });
 
   it('replaces RGB through the soft mask without increasing source alpha', () => {
@@ -321,8 +324,18 @@ describe('raster effect stroke session', () => {
     expect(useStore.getState().documents[0].past).toHaveLength(1);
   });
 
-  it('allows only one in-flight base commit and creates one effect layer', async () => {
-    const document = documentWithDrawing({ selectedLayer: { type: 'base', id: 'base-effect-document' } });
+  it('allows only one in-flight base commit and preserves the base visual slot', async () => {
+    const document = documentWithDrawing({
+      selectedLayer: { type: 'base', id: 'base-effect-document' },
+      baseLayer: {
+        ...documentWithDrawing().baseLayer,
+        id: 'base-effect-document',
+        opacity: 0.65,
+        adjustments: { brightness: 1.2, contrast: 0.8, saturation: 0.9 },
+        eraseElements: [{ type: 'polygon', points: [0, 0, 1, 0, 1, 1], mode: 'add' }],
+      },
+    });
+    const originalOrder = (document.layerOrder ?? []).map(ref => ({ ...ref }));
     useStore.setState({ documents: [document], activeDocIndex: 0 });
     const session = await createRasterEffectSession(makeOptions({ layer: { type: 'base' } }));
     session.append([0.1, 0.2, 0.3, 0.4]);
@@ -333,10 +346,19 @@ describe('raster effect stroke session', () => {
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
     const updated = useStore.getState().documents[0];
     expect(updated.past).toHaveLength(1);
-    const effects = updated.aiLayers.filter(layer => layer.operation === 'effect');
-    expect(effects).toHaveLength(1);
-    expect(effects[0].replacesBase).toBe(true);
-    expect(effects[0].opacity).toBe(updated.baseLayer.opacity);
+    expect(updated.aiLayers).toEqual(document.aiLayers);
+    expect(updated.layerOrder).toEqual(originalOrder);
+    expect(updated.cleanup.committed).toBe('data:image/png;base64,session-100x80');
+    expect(updated.baseLayer.opacity).toBe(0.65);
+    expect(updated.baseLayer.adjustments).toEqual({ brightness: 1, contrast: 1, saturation: 1 });
+    expect(updated.baseLayer.eraseElements).toEqual([]);
+
+    useStore.getState().undo();
+    const restored = useStore.getState().documents[0];
+    expect(restored.cleanup.committed).toBe(document.cleanup.committed);
+    expect(restored.baseLayer.adjustments).toEqual(document.baseLayer.adjustments);
+    expect(restored.baseLayer.eraseElements).toEqual(document.baseLayer.eraseElements);
+    expect(restored.layerOrder).toEqual(originalOrder);
   });
 
   it('rejects a locked target before building source pixels', async () => {
