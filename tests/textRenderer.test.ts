@@ -80,18 +80,65 @@ describe('shared text renderer', () => {
   it('clips export drawing only for paragraph text with an explicit height', () => {
     const save = vi.fn();
     const beginPath = vi.fn();
+    const translate = vi.fn();
+    const rotate = vi.fn();
+    const scale = vi.fn();
     const rect = vi.fn();
     const clip = vi.fn();
     const drawImage = vi.fn();
     const restore = vi.fn();
-    const context = { save, beginPath, rect, clip, drawImage, restore } as unknown as CanvasRenderingContext2D;
+    const context = { save, beginPath, translate, rotate, scale, rect, clip, drawImage, restore } as unknown as CanvasRenderingContext2D;
 
     renderTextObjectToContext(context, { ...text, textMode: 'paragraph', height: 0.12 }, 2000, 1000);
 
-    expect(rect).toHaveBeenCalledWith(500, 300, 480, 108);
+    expect(translate).toHaveBeenCalledWith(500, 300);
+    expect(rotate).toHaveBeenCalledWith(12 * Math.PI / 180);
+    expect(scale).toHaveBeenCalledWith(1.2, 0.9);
+    expect(rect).toHaveBeenCalledWith(0, 0, 400, 120);
     expect(clip).toHaveBeenCalledTimes(1);
     expect(drawImage).toHaveBeenCalledWith('text-canvas', 20, 30);
-    expect(restore).toHaveBeenCalledTimes(1);
+    expect(restore).toHaveBeenCalledTimes(2);
+  });
+
+  it('rotates the paragraph export clip with the text box transform', () => {
+    const calls: Array<[string, ...number[]]> = [];
+    const record = (name: string, ...values: number[]): [string, ...number[]] => [
+      name,
+      ...values.map(value => Number(value.toFixed(6))),
+    ];
+    const context = {
+      save: vi.fn(),
+      beginPath: vi.fn(() => calls.push(['beginPath'])),
+      translate: vi.fn((x: number, y: number) => calls.push(record('translate', x, y))),
+      rotate: vi.fn((angle: number) => calls.push(record('rotate', angle))),
+      scale: vi.fn((x: number, y: number) => calls.push(record('scale', x, y))),
+      rect: vi.fn((x: number, y: number, width: number, height: number) => calls.push(record('rect', x, y, width, height))),
+      clip: vi.fn(() => calls.push(['clip'])),
+      drawImage: vi.fn(),
+      restore: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+
+    renderTextObjectToContext(context, {
+      ...text,
+      text: 'Asymmetric rotated paragraph clipping sample',
+      textMode: 'paragraph',
+      x: 0.11,
+      y: 0.23,
+      width: 0.17,
+      height: 0.09,
+      scaleX: 1.4,
+      scaleY: 0.6,
+      rotation: 37,
+    }, 1234, 789);
+
+    expect(calls).toEqual([
+      ['beginPath'],
+      ['translate', 135.74, 181.47],
+      ['rotate', 0.645772],
+      ['scale', 1.4, 0.6],
+      ['rect', 0, 0, 209.78, 71.01],
+      ['clip'],
+    ]);
   });
 
   it('does not clip legacy export drawing', () => {

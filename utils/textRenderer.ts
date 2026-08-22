@@ -63,18 +63,20 @@ export function renderTextObjectToContext(
   const canvas = node.toCanvas({ x, y, width, height, pixelRatio: 1 });
   const shouldClip = text.textMode === 'paragraph' && Number.isFinite(text.height) && text.height! > 0;
   if (shouldClip) {
-    context.save?.();
+    const scaleX = Number.isFinite(text.scaleX) ? text.scaleX : 1;
+    const scaleY = Number.isFinite(text.scaleY) ? text.scaleY : 1;
+    context.save();
     context.beginPath();
-    context.rect(
-      text.x * documentWidth,
-      text.y * documentHeight,
-      Math.max(1, text.width * documentWidth * Math.abs(text.scaleX || 1)),
-      Math.max(1, text.height! * documentHeight * Math.abs(text.scaleY || 1)),
-    );
+    context.translate(text.x * documentWidth, text.y * documentHeight);
+    context.rotate((text.rotation * Math.PI) / 180);
+    context.scale(scaleX, scaleY);
+    context.rect(0, 0, Math.max(1, text.width * documentWidth), Math.max(1, text.height! * documentHeight));
+    context.restore();
+    context.save();
     context.clip();
   }
   context.drawImage(canvas, x, y);
-  if (shouldClip) context.restore?.();
+  if (shouldClip) context.restore();
   node.destroy();
 }
 
