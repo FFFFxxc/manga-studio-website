@@ -261,6 +261,7 @@ describe('CanvasArea raster-effect interaction', () => {
     fireEvent.pointerDown(stage, { pointerId: 9, button: 0, clientX: 320, clientY: 320 });
     fireEvent.pointerUp(window, { pointerId: 9 });
     expect(session.commit).not.toHaveBeenCalled();
+    act(() => useStore.getState().setActiveTool('brush'));
 
     await act(async () => {
       resolveSession?.(session);
@@ -271,6 +272,23 @@ describe('CanvasArea raster-effect interaction', () => {
     expect(session.append).toHaveBeenCalledWith(expect.any(Array));
     expect(session.append.mock.calls[0][0]).toHaveLength(2);
     expect(useStore.getState().documents[0].past).toHaveLength(1);
+  });
+
+  it('cancels pending session construction when CanvasArea unmounts', async () => {
+    let resolveSession: ((value: typeof session) => void) | null = null;
+    effectMocks.createRasterEffectSession.mockReturnValue(new Promise(resolve => { resolveSession = resolve; }));
+    const view = render(<CanvasArea />);
+    fireEvent.pointerDown(screen.getByTestId('effect-canvas-stage'), { pointerId: 10, button: 0, clientX: 320, clientY: 320 });
+
+    view.unmount();
+    await act(async () => {
+      resolveSession?.(session);
+      await Promise.resolve();
+    });
+
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(session.commit).not.toHaveBeenCalled();
+    expect(stageHarness.releasePointerCapture).toHaveBeenCalledWith(10);
   });
 
   it.each(['pointercancel', 'window-blur', 'tool-switch', 'document-switch'] as const)(

@@ -6,7 +6,7 @@ import Konva from 'konva';
 import { useStore } from '@/store/useStore';
 import { useShallow } from 'zustand/react/shallow';
 import { loadImagesFromFiles, uid, validateFile } from '@/utils/imageUtils';
-import type { AiRasterLayer, BaseLayerAdjustments, ImageDocument, MaskElement, StrokeData, WatermarkObject, TextObject, ShapeObject, CropRect, BubbleObject, PerspectiveQuad, TranslationMaskObject } from '@/types';
+import type { AiRasterLayer, BaseLayerAdjustments, BlurSettings, ImageDocument, MaskElement, StrokeData, WatermarkObject, TextObject, ShapeObject, CropRect, BubbleObject, PerspectiveQuad, TranslationMaskObject } from '@/types';
 import { resolveVisualLayerOrder } from '@/utils/layerOrder';
 import { buildBaseCanvas, buildRasterLayerCanvas, createFloodMask, bakeStrokeIntoLayerSrc } from '@/utils/cleanupRaster';
 import { DropZone } from './DropZone';
@@ -99,6 +99,7 @@ interface RasterEffectGesture {
   pointerId: number;
   pointerTarget: HTMLElement | null;
   session: RasterEffectSession | null;
+  settings: BlurSettings;
   acceptsPoints: boolean;
   previewRunning: boolean;
   cancelled: boolean;
@@ -1266,6 +1267,7 @@ export function CanvasArea() {
   const [pendingTextDraft, setPendingTextDraft] = useState<PendingTextDraft | null>(null);
   const [textEditorOverflowing, setTextEditorOverflowing] = useState(false);
   const [effectPreviewSlot, setEffectPreviewSlot] = useState<RasterEffectPreview | null>(null);
+  const [activeEffectGestureSettings, setActiveEffectGestureSettings] = useState<BlurSettings | null>(null);
   const shiftPressedRef = useRef(false);
   const checkerPattern = useRef<HTMLCanvasElement | null>(null);
   if (typeof document !== 'undefined' && !checkerPattern.current) checkerPattern.current = makeCheckerPattern();
@@ -1395,6 +1397,7 @@ export function CanvasArea() {
     effectOverlayRef.current?.clear();
     effectPreviewSlotRef.current = null;
     setEffectPreviewSlot(null);
+    setActiveEffectGestureSettings(null);
   }, []);
 
   const releaseEffectPointer = (gesture: RasterEffectGesture) => {
@@ -1402,12 +1405,8 @@ export function CanvasArea() {
     gesture.pointerTarget = null;
   };
 
-  const cancelEffectGesture = useCallback(() => {
-    const gesture = effectGestureRef.current;
-    if (gesture?.committing) {
-      releaseEffectPointer(gesture);
-      return;
-    }
+  const discardEffectGesture = useCallback((requestedGesture?: RasterEffectGesture) => {
+    const gesture = requestedGesture ?? effectGestureRef.current;
     effectTokenRef.current += 1;
     if (effectFrameRef.current !== null) {
       window.cancelAnimationFrame(effectFrameRef.current);
@@ -1418,11 +1417,20 @@ export function CanvasArea() {
       gesture.session?.cancel();
       releaseEffectPointer(gesture);
     }
-    effectGestureRef.current = null;
+    if (!requestedGesture || effectGestureRef.current === requestedGesture) effectGestureRef.current = null;
     pendingEffectPointsRef.current = [];
     lastEffectPointRef.current = null;
     clearEffectOverlay();
   }, [clearEffectOverlay]);
+
+  const cancelEffectGesture = useCallback(() => {
+    const gesture = effectGestureRef.current;
+    if (gesture?.released || gesture?.committing) {
+      releaseEffectPointer(gesture);
+      return;
+    }
+    discardEffectGesture(gesture ?? undefined);
+  }, [discardEffectGesture]);
 
   const finishPolyLasso = useCallback((mode: 'replace' | 'add' | 'subtract') => {
     const points = [...polyLassoPoints.current];
@@ -1494,6 +1502,16 @@ export function CanvasArea() {
     if (brushFrameRef.current !== null) window.cancelAnimationFrame(brushFrameRef.current);
     if (effectFrameRef.current !== null) window.cancelAnimationFrame(effectFrameRef.current);
     if (textDraftFrameRef.current !== null) window.cancelAnimationFrame(textDraftFrameRef.current);
+    const gesture = effectGestureRef.current;
+    if (gesture) {
+      releaseEffectPointer(gesture);
+      if (!gesture.committing) {
+        gesture.cancelled = true;
+        gesture.session?.cancel();
+        effectTokenRef.current += 1;
+      }
+      effectGestureRef.current = null;
+    }
   }, []);
 
   // ── Native pointermove for zero-lag brush cursor circle ──────────────────
@@ -1518,8 +1536,9 @@ export function CanvasArea() {
       const docH = doc?.height ?? 1000;
       const ps = doc ? Math.min(1, 1800 / Math.max(doc.width, doc.height)) : 1;
       const gestureSettings = isPainting.current ? brushGestureSettingsRef.current : null;
-      const size = tool === 'blur' ? store.blurSettings.brushSize : gestureSettings?.size ?? store.cleanupSettings.brushSize;
-      const hardness = tool === 'blur' ? store.blurSettings.hardness : gestureSettings?.hardness ?? store.cleanupSettings.brushHardness;
+      const effectSettings = tool === 'blur' ? effectGestureRef.current?.settings ?? store.blurSettings : null;
+      const size = tool === 'blur' ? effectSettings!.brushSize : gestureSettings?.size ?? store.cleanupSettings.brushSize;
+      const hardness = tool === 'blur' ? effectSettings!.hardness : gestureSettings?.hardness ?? store.cleanupSettings.brushHardness;
       const diameter = size * docH * ps * vp.scale;
       const { outer } = getBrushTipRadii(diameter, hardness);
       cursor.style.display = 'block';
@@ -1744,6 +1763,7 @@ export function CanvasArea() {
     const target: RasterEffectTarget = selected?.type === 'ai'
       ? { type: 'ai', id: selected.id }
       : { type: 'base', id: activeDoc.baseLayer.id };
+    const settings = { ...blurSettings };
     const token = ++effectTokenRef.current;
     const pointerTarget = event.evt.target as HTMLElement;
     const gesture: RasterEffectGesture = {
@@ -1752,13 +1772,15 @@ export function CanvasArea() {
       pointerId: event.evt.pointerId,
       pointerTarget,
       session: null,
-      acceptsPoints: blurSettings.gesture === 'brush' && blurSettings.applyTo !== 'selection',
+      settings,
+      acceptsPoints: settings.gesture === 'brush' && settings.applyTo !== 'selection',
       previewRunning: false,
       cancelled: false,
       released: false,
       committing: false,
     };
     effectGestureRef.current = gesture;
+    setActiveEffectGestureSettings(settings);
     pendingEffectPointsRef.current = [];
     lastEffectPointRef.current = null;
     clearEffectOverlay();
@@ -1768,7 +1790,7 @@ export function CanvasArea() {
     void createRasterEffectSession({
       documentId: activeDoc.id,
       layer: target.type === 'base' ? { type: 'base' } : { type: 'ai', id: target.id },
-      settings: { ...blurSettings },
+      settings,
       previewScale,
     }).then(session => {
       if (effectGestureRef.current !== gesture || gesture.cancelled || effectTokenRef.current !== token) {
@@ -1781,7 +1803,7 @@ export function CanvasArea() {
     }).catch(error => {
       if (effectGestureRef.current !== gesture || gesture.cancelled) return;
       setClipboardInfo(error instanceof Error ? error.message : 'Не удалось начать эффект');
-      cancelEffectGesture();
+      discardEffectGesture(gesture);
     });
   };
 
@@ -3338,9 +3360,9 @@ export function CanvasArea() {
       {(activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur') && (
         <BrushCursor
           ref={cursorRef}
-          diameterPx={(activeTool === 'blur' ? blurSettings.brushSize : activeBrushGestureSettings?.size ?? cleanupSettings.brushSize)
+          diameterPx={(activeTool === 'blur' ? activeEffectGestureSettings?.brushSize ?? blurSettings.brushSize : activeBrushGestureSettings?.size ?? cleanupSettings.brushSize)
             * (activeDoc?.height ?? 1000) * previewScale * viewport.scale}
-          hardness={activeTool === 'blur' ? blurSettings.hardness : activeBrushGestureSettings?.hardness ?? cleanupSettings.brushHardness}
+          hardness={activeTool === 'blur' ? activeEffectGestureSettings?.hardness ?? blurSettings.hardness : activeBrushGestureSettings?.hardness ?? cleanupSettings.brushHardness}
           color={activeTool === 'maskBrush' ? '#ff8000'
             : activeTool === 'blur' ? '#5e9fe8'
               : activeTool === 'eraser' ? '#ffffff' : activeBrushGestureSettings?.color ?? cleanupSettings.brushColor}
