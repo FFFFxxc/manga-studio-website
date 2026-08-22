@@ -43,6 +43,8 @@ import { toast } from '@/hooks/use-toast';
 import { beginEditorOperation, useEditorUiStore } from '@/store/useEditorUiStore';
 import { applyRasterEffectPreview } from '@/utils/rasterEffects';
 import { PerspectiveOverlay } from './PerspectiveOverlay';
+import { TextDraftOverlay } from './TextDraftOverlay';
+import { createTextDraftRect, type TextDraftRect } from '@/utils/textBox';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -51,6 +53,18 @@ const RASTER_FILTERS = [Konva.Filters.Brightness, Konva.Filters.Contrast, Konva.
 interface PendingImageImport {
   files: File[];
   source: 'paste' | 'drop' | 'picker';
+}
+
+interface PendingTextDraft {
+  id: string;
+  object: TextObject;
+  original?: TextObject;
+}
+
+interface TextPointerGesture {
+  pointerId: number;
+  start: { x: number; y: number };
+  end: { x: number; y: number };
 }
 
 function scaleToFit(w: number, h: number, maxSide: number): number {
@@ -1015,7 +1029,7 @@ function CropOverlay({
 export function CanvasArea() {
   const {
     documents, activeDocIndex, setActiveDoc,
-    activeTool, cleanupSettings, blurSettings,
+    activeTool, setActiveTool, cleanupSettings, blurSettings,
         addStroke, addMaskStroke, addMaskElement, addEraseElement, updateWatermark, updateText, updateTranslationMask, updateShape, updateBubble,
     selectLayer, updateCleanupSettings,
     selectedObject, setSelectedObject,
@@ -1032,6 +1046,7 @@ export function CanvasArea() {
     activeDocIndex: state.activeDocIndex,
     setActiveDoc: state.setActiveDoc,
     activeTool: state.activeTool,
+    setActiveTool: state.setActiveTool,
     cleanupSettings: state.cleanupSettings,
     blurSettings: state.blurSettings,
     addStroke: state.addStroke,
@@ -1081,10 +1096,15 @@ export function CanvasArea() {
   const lastBrushPointRef = useRef<{ x: number; y: number } | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const activePointerTargetRef = useRef<HTMLElement | null>(null);
+  const textPointerGestureRef = useRef<TextPointerGesture | null>(null);
+  const textPointerTargetRef = useRef<HTMLElement | null>(null);
+  const textDraftFrameRef = useRef<number | null>(null);
   const isEffectPainting = useRef(false);
   const effectPointsRef = useRef<number[]>([]);
   const effectBusyRef = useRef(false);
   const finishPointerRef = useRef<(() => void) | null>(null);
+  const finishTextPointerRef = useRef<((event?: PointerEvent) => void) | null>(null);
+  const cancelTextPointerRef = useRef<(() => void) | null>(null);
   const thumbnailTimerRef = useRef<number | null>(null);
   const thumbnailIdleRef = useRef<number | null>(null);
   const isLassoing = useRef(false);
@@ -1114,6 +1134,9 @@ export function CanvasArea() {
   const [pendingImageImport, setPendingImageImport] = useState<PendingImageImport | null>(null);
   const [rememberImportChoice, setRememberImportChoice] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [textDraftRect, setTextDraftRect] = useState<TextDraftRect | null>(null);
+  const [pendingTextDraft, setPendingTextDraft] = useState<PendingTextDraft | null>(null);
+  const textEditorHostRef = useRef<HTMLDivElement>(null);
   const shiftPressedRef = useRef(false);
   const checkerPattern = useRef<HTMLCanvasElement | null>(null);
   if (typeof document !== 'undefined' && !checkerPattern.current) checkerPattern.current = makeCheckerPattern();
@@ -1286,6 +1309,7 @@ export function CanvasArea() {
 
   useEffect(() => () => {
     if (brushFrameRef.current !== null) window.cancelAnimationFrame(brushFrameRef.current);
+    if (textDraftFrameRef.current !== null) window.cancelAnimationFrame(textDraftFrameRef.current);
   }, []);
 
   // ── Native pointermove for zero-lag brush cursor circle ──────────────────
@@ -1399,11 +1423,157 @@ export function CanvasArea() {
       .finally(() => { effectBusyRef.current = false; });
   };
 
+  const clearTextGeometryDraft = () => {
+    if (textDraftFrameRef.current !== null) {
+      window.cancelAnimationFrame(textDraftFrameRef.current);
+      textDraftFrameRef.current = null;
+    }
+    const gesture = textPointerGestureRef.current;
+    if (gesture) {
+      try { textPointerTargetRef.current?.releasePointerCapture(gesture.pointerId); } catch { /* already released */ }
+    }
+    textPointerGestureRef.current = null;
+    textPointerTargetRef.current = null;
+    setTextDraftRect(null);
+  };
+
+  const clearTextDraftState = () => {
+    clearTextGeometryDraft();
+    setPendingTextDraft(null);
+    setInlineEditingTextId(null);
+    isNewTextRef.current = false;
+  };
+
+  const cancelTextDraft = () => {
+    if (!pendingTextDraft && !textPointerGestureRef.current) return;
+    clearTextDraftState();
+  };
+
+  const commitTextDraft = (value: string) => {
+    if (!pendingTextDraft) return;
+    if (value.trim().length === 0) {
+      cancelTextDraft();
+      return;
+    }
+
+    if (pendingTextDraft.original) {
+      pushHistory();
+      updateText(pendingTextDraft.id, { text: value }, { history: false });
+    } else {
+      // addText owns the creation snapshot, so adding another pushHistory here
+      // would make a single text creation require two undo operations.
+      addText({ ...pendingTextDraft.object, text: value });
+    }
+    setSelectedObject({ type: 'text', id: pendingTextDraft.id });
+    setActiveTool('select');
+    clearTextDraftState();
+  };
+
+  const nativeTextPoint = (event: PointerEvent) => {
+    const stage = stageRef.current;
+    if (!stage || !activeDoc) return null;
+    const bounds = stage.container().getBoundingClientRect();
+    const screenPoint = {
+      x: (event.clientX - bounds.left) * stage.width() / Math.max(1, bounds.width),
+      y: (event.clientY - bounds.top) * stage.height() / Math.max(1, bounds.height),
+    };
+    const imagePoint = screenToImage(screenPoint, { viewport, imageWidth: imgW, imageHeight: imgH });
+    if (!imagePoint) return null;
+    return { x: imagePoint.x * activeDoc.width, y: imagePoint.y * activeDoc.height };
+  };
+
+  const queueTextGeometry = (end: { x: number; y: number }) => {
+    const gesture = textPointerGestureRef.current;
+    if (!gesture || !activeDoc) return;
+    gesture.end = end;
+    if (textDraftFrameRef.current !== null) return;
+    textDraftFrameRef.current = window.requestAnimationFrame(() => {
+      textDraftFrameRef.current = null;
+      const latest = textPointerGestureRef.current;
+      if (!latest) return;
+      setTextDraftRect(createTextDraftRect(latest.start, latest.end, activeDoc, 5));
+    });
+  };
+
+  const finishTextGeometryDraft = (event?: PointerEvent) => {
+    const gesture = textPointerGestureRef.current;
+    if (!gesture || !activeDoc) return false;
+    const end = event ? nativeTextPoint(event) ?? gesture.end : gesture.end;
+    const rect = createTextDraftRect(gesture.start, end, activeDoc, 5);
+    clearTextGeometryDraft();
+
+    const id = uid();
+    const object: TextObject = {
+      id,
+      text: textSettings.draftText,
+      fontFamily: textSettings.fontFamily,
+      fontSize: textSettings.fontSize,
+      fill: textSettings.fill,
+      stroke: textSettings.stroke,
+      strokeWidth: textSettings.strokeWidth,
+      shadowColor: textSettings.shadowColor,
+      shadowBlur: textSettings.shadowBlur,
+      shadowOffsetX: textSettings.shadowOffsetX,
+      shadowOffsetY: textSettings.shadowOffsetY,
+      lineHeight: textSettings.lineHeight,
+      align: textSettings.align,
+      bold: textSettings.bold,
+      italic: textSettings.italic,
+      vertical: textSettings.vertical,
+      textMode: rect.mode,
+      width: rect.mode === 'point' ? textSettings.width : rect.width,
+      height: rect.height,
+      x: rect.x,
+      y: rect.y,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      visible: true,
+    };
+    setPendingTextDraft({ id, object });
+    isNewTextRef.current = true;
+    setInlineEditingTextId(id);
+    return true;
+  };
+  finishTextPointerRef.current = finishTextGeometryDraft;
+  cancelTextPointerRef.current = clearTextGeometryDraft;
+
+  useEffect(() => {
+    if (activeTool !== 'text' && textPointerGestureRef.current) clearTextGeometryDraft();
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (pendingTextDraft && !inlineEditingTextId) setPendingTextDraft(null);
+  }, [inlineEditingTextId, pendingTextDraft]);
+
+  useEffect(() => {
+    const editor = textEditorHostRef.current?.querySelector('textarea');
+    if (!editor || !pendingTextDraft) return;
+    editor.dataset.textMode = pendingTextDraft.object.textMode ?? 'point';
+  }, [inlineEditingTextId, pendingTextDraft]);
+
   const handleMouseDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
     if (activeTool === 'pan' || e.evt.button === 1) {
       isPanning.current = true;
       panStart.current = { x: e.evt.clientX, y: e.evt.clientY };
       panVpStart.current = { x: viewport.x, y: viewport.y };
+      return;
+    }
+    if (activeTool === 'text' && activeDoc && e.evt.button === 0 && e.target.getClassName() !== 'Text') {
+      const stage = stageRef.current;
+      const position = stage?.getPointerPosition();
+      const imagePoint = position && screenToImage(position, { viewport, imageWidth: imgW, imageHeight: imgH });
+      if (!imagePoint?.inside) return;
+      if (pendingTextDraft) clearTextDraftState();
+
+      const start = { x: imagePoint.x * activeDoc.width, y: imagePoint.y * activeDoc.height };
+      textPointerGestureRef.current = { pointerId: e.evt.pointerId, start, end: start };
+      setTextDraftRect(createTextDraftRect(start, start, activeDoc, 5));
+      try {
+        const target = e.evt.target as HTMLElement;
+        target.setPointerCapture(e.evt.pointerId);
+        textPointerTargetRef.current = target;
+      } catch { /* capture is best-effort */ }
       return;
     }
     if (activeTool === 'blur' && activeDoc && e.evt.button === 0) {
@@ -1584,6 +1754,12 @@ export function CanvasArea() {
       return;
     }
 
+    if (textPointerGestureRef.current) {
+      const point = nativeTextPoint(e.evt);
+      if (point) queueTextGeometry(point);
+      return;
+    }
+
     if (activeTool === 'rectSelect' && isRectSelecting.current && pos) {
       const imagePoint = screenToImage(pos, { viewport, imageWidth: imgW, imageHeight: imgH });
       if (imagePoint) {
@@ -1681,6 +1857,10 @@ export function CanvasArea() {
 
   const handleMouseUp = (e?: Konva.KonvaEventObject<PointerEvent>) => {
     isPanning.current = false;
+    if (textPointerGestureRef.current) {
+      finishTextGeometryDraft(e?.evt);
+      return;
+    }
     if (isEffectPainting.current) {
       isEffectPainting.current = false;
       const points = [...effectPointsRef.current];
@@ -1793,23 +1973,43 @@ export function CanvasArea() {
     }
   };
 
+  const handlePointerCancel = (event: Konva.KonvaEventObject<PointerEvent>) => {
+    if (textPointerGestureRef.current?.pointerId === event.evt.pointerId) {
+      clearTextGeometryDraft();
+      return;
+    }
+    handleMouseUp(event);
+  };
+
   // Keep a native safety net in addition to Konva's pointerup/cancel events.
   // Pointer capture is useful for long strokes, but some browsers deliver the
   // release only to the captured canvas and skip the React-Konva callback.
   finishPointerRef.current = () => handleMouseUp();
   useEffect(() => {
     const finish = (event: PointerEvent) => {
+      if (textPointerGestureRef.current?.pointerId === event.pointerId) {
+        finishTextPointerRef.current?.(event);
+        return;
+      }
+      if (activePointerIdRef.current === event.pointerId) finishPointerRef.current?.();
+    };
+    const cancel = (event: PointerEvent) => {
+      if (textPointerGestureRef.current?.pointerId === event.pointerId) {
+        cancelTextPointerRef.current?.();
+        return;
+      }
       if (activePointerIdRef.current === event.pointerId) finishPointerRef.current?.();
     };
     const finishOnBlur = () => {
+      if (textPointerGestureRef.current) cancelTextPointerRef.current?.();
       if (isPainting.current) finishPointerRef.current?.();
     };
     window.addEventListener('pointerup', finish, true);
-    window.addEventListener('pointercancel', finish, true);
+    window.addEventListener('pointercancel', cancel, true);
     window.addEventListener('blur', finishOnBlur);
     return () => {
       window.removeEventListener('pointerup', finish, true);
-      window.removeEventListener('pointercancel', finish, true);
+      window.removeEventListener('pointercancel', cancel, true);
       window.removeEventListener('blur', finishOnBlur);
     };
   }, []);
@@ -1823,53 +2023,9 @@ export function CanvasArea() {
     }
     const onStageOrBase = target === (stageRef.current as unknown as Konva.Node) || target.name() === 'base-image';
 
-    // ── Text tool: place text at click position ──────────────────────────────
-    // Konva bubbles clicks from raster Layers/Groups, so restricting this to
-    // Stage/base-image made clicks on the visible artwork silently do nothing.
-    // Any canvas click is a valid insertion point; clicking an existing text
-    // object remains an edit/select gesture instead of creating a duplicate.
-    if (activeTool === 'text' && activeDoc && target.getClassName() !== 'Text') {
-      const stage = stageRef.current;
-      if (!stage) return;
-      const pos = stage.getPointerPosition();
-      if (!pos) return;
-      const imgPos = screenToImage(pos, { viewport, imageWidth: imgW, imageHeight: imgH });
-      if (!imgPos || !imgPos.inside) return;
-
-      // Clamp to image bounds
-      const nx = Math.max(0, Math.min(0.95, imgPos.x));
-      const ny = Math.max(0, Math.min(0.95, imgPos.y));
-
-      pushHistory();
-      const newText = {
-        id: uid(),
-        text: textSettings.draftText || 'Текст',
-        fontFamily: textSettings.fontFamily,
-        fontSize: textSettings.fontSize,
-        fill: textSettings.fill,
-        stroke: textSettings.stroke,
-        strokeWidth: textSettings.strokeWidth,
-        shadowColor: textSettings.shadowColor,
-        shadowBlur: textSettings.shadowBlur,
-        shadowOffsetX: textSettings.shadowOffsetX,
-        shadowOffsetY: textSettings.shadowOffsetY,
-        lineHeight: textSettings.lineHeight,
-        align: textSettings.align,
-        bold: textSettings.bold,
-        italic: textSettings.italic,
-        vertical: textSettings.vertical,
-        width: textSettings.width,
-        x: nx,
-        y: ny,
-        scaleX: 1,
-        scaleY: 1,
-        rotation: 0,
-        visible: true,
-      };
-      addText(newText);
-      setSelectedObject({ id: newText.id, type: 'text' });
-      isNewTextRef.current = true;
-      setInlineEditingTextId(newText.id);
+    // Text insertion is owned by the pointer lifecycle. The click that follows
+    // pointerup must never publish a second object or touch history.
+    if (activeTool === 'text' && target.getClassName() !== 'Text') {
       return;
     }
 
@@ -2317,7 +2473,7 @@ export function CanvasArea() {
           onPointerDown={handleMouseDown}
           onPointerMove={handleMouseMove}
           onPointerUp={handleMouseUp}
-          onPointerCancel={handleMouseUp}
+          onPointerCancel={handlePointerCancel}
           onClick={handleStageClick}
           onDblClick={handleStageDblClick}
           onDblTap={handleStageDblClick}
@@ -2455,6 +2611,7 @@ export function CanvasArea() {
                     onEditRequest={() => {
                       if (activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'rectSelect' || activeTool === 'wand') return;
                       setSelectedObject({ id: txt.id, type: 'text' });
+                      setPendingTextDraft({ id: txt.id, object: { ...txt }, original: { ...txt } });
                       isNewTextRef.current = false;
                       setInlineEditingTextId(txt.id);
                     }}
@@ -2573,6 +2730,15 @@ export function CanvasArea() {
         </Stage>
       )}
 
+      {textDraftRect && activeDoc && textPointerGestureRef.current && (
+        <TextDraftOverlay
+          rect={textDraftRect}
+          docWidth={activeDoc.width * previewScale}
+          docHeight={activeDoc.height * previewScale}
+          viewport={viewport}
+        />
+      )}
+
       {/* Layer crop confirmation bar */}
       {layerCropTarget && activeTool === 'crop' && (
         <div style={{
@@ -2662,32 +2828,23 @@ export function CanvasArea() {
 
       {/* Inline text editor overlay */}
       {inlineEditingTextId && activeDoc && (() => {
-        const editingTxt = activeDoc.texts.find(t => t.id === inlineEditingTextId);
+        const editingTxt = pendingTextDraft?.id === inlineEditingTextId
+          ? pendingTextDraft.object
+          : activeDoc.texts.find(t => t.id === inlineEditingTextId);
         if (!editingTxt) return null;
         return (
-          <InlineTextEditor
-            key={inlineEditingTextId}
-            textObj={editingTxt}
-            docWidth={activeDoc.width * previewScale}
-            docHeight={activeDoc.height * previewScale}
-            viewport={viewport}
-            isNew={isNewTextRef.current}
-            onCommit={newText => {
-              if (newText.trim() === '' && isNewTextRef.current) {
-                // Delete the empty newly-created text
-                useStore.getState().deleteSelectedObject();
-              } else {
-                updateText(inlineEditingTextId, { text: newText });
-              }
-              setInlineEditingTextId(null);
-            }}
-            onCancel={() => {
-              if (isNewTextRef.current) {
-                useStore.getState().deleteSelectedObject();
-              }
-              setInlineEditingTextId(null);
-            }}
-          />
+          <div ref={textEditorHostRef} style={{ display: 'contents' }}>
+            <InlineTextEditor
+              key={inlineEditingTextId}
+              textObj={editingTxt}
+              docWidth={activeDoc.width * previewScale}
+              docHeight={activeDoc.height * previewScale}
+              viewport={viewport}
+              isNew={isNewTextRef.current}
+              onCommit={commitTextDraft}
+              onCancel={cancelTextDraft}
+            />
+          </div>
         );
       })()}
 
