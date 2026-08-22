@@ -114,7 +114,7 @@ function mergeBounds(current: PixelRect | null, next: PixelRect | null): PixelRe
   return { x, y, width: right - x, height: bottom - y };
 }
 
-function localBoundsForDocumentRect(rect: PixelRect, placement: RasterPlacement, width: number, height: number) {
+export function localBoundsForDocumentRect(rect: PixelRect, placement: RasterPlacement, width: number, height: number) {
   const corners = [
     { x: rect.x / width, y: rect.y / height },
     { x: (rect.x + rect.width) / width, y: rect.y / height },
@@ -129,7 +129,7 @@ function localBoundsForDocumentRect(rect: PixelRect, placement: RasterPlacement,
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function blendPixel(target: Uint8ClampedArray, index: number, source: Uint8ClampedArray, sourceIndex: number, amount: number) {
+export function blendPixel(target: Uint8ClampedArray, index: number, source: Uint8ClampedArray, sourceIndex: number, amount: number) {
   const sourceAlpha = (source[sourceIndex + 3] / 255) * amount;
   if (sourceAlpha <= 0) return;
   const targetAlpha = target[index + 3] / 255;

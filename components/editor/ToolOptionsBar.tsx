@@ -23,7 +23,7 @@ const selectionModes: Array<{ mode: SelectionMode; label: string; hint: string }
 
 export function ToolOptionsBar() {
   const state = useStore();
-  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, eyedropperSettings, updateEyedropperSettings, foregroundColor, setForegroundColor, cloneStampSettings, updateCloneStampSettings, selectedObject, documents, activeDocIndex } = state;
+  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, eyedropperSettings, updateEyedropperSettings, foregroundColor, setForegroundColor, cloneStampSettings, updateCloneStampSettings, smudgeSettings, updateSmudgeSettings, selectedObject, documents, activeDocIndex } = state;
   const doc = activeDocIndex >= 0 ? documents[activeDocIndex] : null;
   const isMarking = activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser';
   const isEffect = activeTool === 'blur';
@@ -145,8 +145,20 @@ export function ToolOptionsBar() {
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={cloneStampSettings.aligned} onChange={event => updateCloneStampSettings({ aligned: event.target.checked })} />Выровненный</label>
         <span>Alt/Option + клик — выбрать источник · S</span>
       </>}
-      {activeTool === 'smudge' && <span>Переносит цвет по направлению движения · R</span>}
-      {activeTool === 'sharpen' && <span>Повышает локальную резкость кистью · R</span>}
+      {activeTool === 'smudge' && <>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Размер <EditorSlider label="Размер пальца" min={3} max={300} step={2} value={Math.round(smudgeSettings.size * 1000)} onChange={value => updateSmudgeSettings({ size: value / 1000 })} style={{ width: 80 }} /></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Край <EditorSlider label="Жёсткость пальца" min={0} max={100} step={5} value={Math.round(smudgeSettings.hardness * 100)} onChange={value => updateSmudgeSettings({ hardness: value / 100 })} style={{ width: 70 }} /></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Сила <EditorSlider label="Сила пальца" min={5} max={100} step={5} value={Math.round(smudgeSettings.strength * 100)} onChange={value => updateSmudgeSettings({ strength: value / 100 })} style={{ width: 70 }} /><span>{Math.round(smudgeSettings.strength * 100)}%</span></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={smudgeSettings.sampleAllLayers} onChange={event => updateSmudgeSettings({ sampleAllLayers: event.target.checked })} />Все слои</label>
+        <span>Тянет пиксели по движению · R</span>
+      </>}
+      {activeTool === 'sharpen' && <>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Размер <EditorSlider label="Размер кисти резкости" min={3} max={300} step={2} value={Math.round(blurSettings.brushSize * 1000)} onChange={value => updateBlurSettings({ brushSize: value / 1000 })} style={{ width: 80 }} /></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Край <EditorSlider label="Жёсткость кисти резкости" min={0} max={100} step={5} value={Math.round(blurSettings.hardness * 100)} onChange={value => updateBlurSettings({ hardness: value / 100 })} style={{ width: 70 }} /></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Радиус <input className="tool-number" aria-label="Радиус кисти резкости" type="number" min="1" max="8" value={blurSettings.sharpenRadius} onChange={event => updateBlurSettings({ sharpenRadius: Math.max(1, Math.min(8, Number(event.target.value))) })} /></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Сила <EditorSlider label="Сила кисти резкости" min={5} max={100} step={5} value={Math.round(blurSettings.sharpenAmount * 100)} onChange={value => updateBlurSettings({ sharpenAmount: value / 100 })} style={{ width: 70 }} /></label>
+        <span>Повышает локальную резкость · R</span>
+      </>}
       {activeTool === 'pan' && <span>Перетаскивайте холст. Удерживайте Space для временного режима.</span>}
 
       {isSelecting && <>

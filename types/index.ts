@@ -518,6 +518,13 @@ export interface CloneStampSettings {
   sample: 'current' | 'all';
 }
 
+export interface SmudgeSettings {
+  size: number;
+  hardness: number;
+  strength: number;
+  sampleAllLayers: boolean;
+}
+
 export type RasterEffectMode = 'blur' | 'pixelate' | 'noise' | 'sharpen';
 
 export interface RasterEffectParameters {

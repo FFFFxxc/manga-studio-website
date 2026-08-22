@@ -17,6 +17,8 @@ const TOOL_LABELS: Partial<Record<ActiveTool, string>> = {
   blur: 'Размытие / Пикселизация',
   eyedropper: 'Пипетка',
   cloneStamp: 'Штамп',
+  smudge: 'Палец',
+  sharpen: 'Резкость',
   select: 'Объект',
 };
 
@@ -332,6 +334,34 @@ function CloneStampOptions() {
   );
 }
 
+function SmudgeOptions() {
+  const settings = useStore(state => state.smudgeSettings);
+  const update = useStore(state => state.updateSmudgeSettings);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <RangeField label="Размер" value={settings.size} min={0.003} max={0.35} step={0.005} onChange={size => update({ size })} format={value => `${Math.round(value * 1000) / 10}%`} />
+      <RangeField label="Жёсткость" value={settings.hardness} min={0} max={1} step={0.05} onChange={hardness => update({ hardness })} format={value => `${Math.round(value * 100)}%`} />
+      <RangeField label="Сила" value={settings.strength} min={0.05} max={1} step={0.05} onChange={strength => update({ strength })} format={value => `${Math.round(value * 100)}%`} />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><input type="checkbox" checked={settings.sampleAllLayers} onChange={event => update({ sampleAllLayers: event.target.checked })} />Брать образец со всех слоёв</label>
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Переносит пиксели по направлению движения. Активное выделение ограничивает мазок.</span>
+    </div>
+  );
+}
+
+function SharpenToolOptions() {
+  const settings = useStore(state => state.blurSettings);
+  const update = useStore(state => state.updateBlurSettings);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <RangeField label="Размер" value={settings.brushSize} min={0.003} max={0.35} step={0.005} onChange={brushSize => update({ brushSize })} format={value => `${Math.round(value * 1000) / 10}%`} />
+      <RangeField label="Жёсткость" value={settings.hardness} min={0} max={1} step={0.05} onChange={hardness => update({ hardness })} format={value => `${Math.round(value * 100)}%`} />
+      <RangeField label="Радиус" value={settings.sharpenRadius} min={1} max={8} step={1} onChange={sharpenRadius => update({ sharpenRadius })} format={value => `${value}px`} />
+      <RangeField label="Сила" value={settings.sharpenAmount} min={0.05} max={1} step={0.05} onChange={sharpenAmount => update({ sharpenAmount })} format={value => `${Math.round(value * 100)}%`} />
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Резкость применяется к активному растровому слою одним шагом Undo.</span>
+    </div>
+  );
+}
+
 function TranslationMaskOptions({ objectId }: { objectId: string }) {
   const store = useStore();
   const document = store.documents[store.activeDocIndex];
@@ -417,8 +447,10 @@ export function ToolOptionsPopoverHost() {
       {effectiveTool === 'blur' && <BlurOptions />}
       {effectiveTool === 'eyedropper' && <EyedropperOptions />}
       {effectiveTool === 'cloneStamp' && <CloneStampOptions />}
+      {effectiveTool === 'smudge' && <SmudgeOptions />}
+      {effectiveTool === 'sharpen' && <SharpenToolOptions />}
       {maskId && <TranslationMaskOptions objectId={maskId} />}
-      {!maskId && !['text', 'brush', 'maskBrush', 'eraser', 'crop', 'blur', 'eyedropper', 'cloneStamp'].includes(effectiveTool) && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Для этого объекта доступны трансформация и действия в контекстном меню слоя.</div>}
+      {!maskId && !['text', 'brush', 'maskBrush', 'eraser', 'crop', 'blur', 'eyedropper', 'cloneStamp', 'smudge', 'sharpen'].includes(effectiveTool) && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Для этого объекта доступны трансформация и действия в контекстном меню слоя.</div>}
     </FloatingPanel>
   );
 }

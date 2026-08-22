@@ -238,6 +238,12 @@ export function EditorShell() {
                 hardness: Math.max(0, Math.min(1, state.cloneStampSettings.hardness + shortcut.delta * 0.05)),
               });
             }
+          } else if (activeTool === 'smudge') {
+            if (shortcut.property === 'size') state.updateSmudgeSettings({ size: Math.max(0.003, Math.min(0.35, state.smudgeSettings.size + shortcut.delta * 0.005)) });
+            else state.updateSmudgeSettings({ hardness: Math.max(0, Math.min(1, state.smudgeSettings.hardness + shortcut.delta * 0.05)) });
+          } else if (activeTool === 'sharpen') {
+            if (shortcut.property === 'size') state.updateBlurSettings({ brushSize: Math.max(0.003, Math.min(0.35, state.blurSettings.brushSize + shortcut.delta * 0.005)) });
+            else state.updateBlurSettings({ hardness: Math.max(0, Math.min(1, state.blurSettings.hardness + shortcut.delta * 0.05)) });
           } else if (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser') {
             if (shortcut.property === 'size') {
               state.updateCleanupSettings({

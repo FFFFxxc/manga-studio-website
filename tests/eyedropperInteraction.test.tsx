@@ -8,9 +8,11 @@ const colorMocks = vi.hoisted(() => ({
 }));
 
 const cloneMocks = vi.hoisted(() => ({ createCloneStampSession: vi.fn() }));
+const retouchMocks = vi.hoisted(() => ({ createSmudgeSession: vi.fn(), createSharpenBrushSession: vi.fn() }));
 
 vi.mock('@/utils/colorSampler', () => colorMocks);
 vi.mock('@/utils/cloneStamp', () => cloneMocks);
+vi.mock('@/utils/smudgeRaster', () => retouchMocks);
 
 vi.mock('react-konva', () => {
   interface Props {
@@ -110,6 +112,8 @@ describe('CanvasArea eyedropper interaction', () => {
     colorMocks.sampleCanvasColor.mockReset();
     colorMocks.sampleCanvasColor.mockReturnValue({ hex: '#123456', rgba: [18, 52, 86, 255] });
     cloneMocks.createCloneStampSession.mockReset();
+    retouchMocks.createSmudgeSession.mockReset();
+    retouchMocks.createSharpenBrushSession.mockReset();
   });
 
   afterEach(() => {
@@ -169,6 +173,33 @@ describe('CanvasArea eyedropper interaction', () => {
     fireEvent.pointerDown(stage, { pointerId: 9, button: 0, clientX: 360, clientY: 320 });
     await waitFor(() => expect(cloneMocks.createCloneStampSession).toHaveBeenCalledTimes(1));
     fireEvent.pointerUp(window, { pointerId: 9 });
+
+    await waitFor(() => expect(session.commit).toHaveBeenCalledTimes(1));
+    expect(session.append).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().documents[0].past).toHaveLength(1);
+  });
+
+  it.each(['smudge', 'sharpen'] as const)('commits one undoable %s stroke', async tool => {
+    const session = {
+      append: vi.fn(),
+      renderPreview: vi.fn(async () => null),
+      commit: vi.fn(async () => {
+        useStore.getState().pushHistory();
+        return useStore.getState().documents[0].baseLayer.id;
+      }),
+      cancel: vi.fn(),
+    };
+    if (tool === 'smudge') retouchMocks.createSmudgeSession.mockResolvedValue(session);
+    else retouchMocks.createSharpenBrushSession.mockResolvedValue(session);
+    useStore.setState({ activeTool: tool });
+    render(<CanvasArea />);
+
+    fireEvent.pointerDown(screen.getByTestId('eyedropper-stage'), {
+      pointerId: 10, button: 0, clientX: 280, clientY: 280,
+    });
+    const factory = tool === 'smudge' ? retouchMocks.createSmudgeSession : retouchMocks.createSharpenBrushSession;
+    await waitFor(() => expect(factory).toHaveBeenCalledTimes(1));
+    fireEvent.pointerUp(window, { pointerId: 10 });
 
     await waitFor(() => expect(session.commit).toHaveBeenCalledTimes(1));
     expect(session.append).toHaveBeenCalledTimes(1);

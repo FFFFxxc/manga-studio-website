@@ -6,7 +6,7 @@ import Konva from 'konva';
 import { useStore } from '@/store/useStore';
 import { useShallow } from 'zustand/react/shallow';
 import { loadImagesFromFiles, uid, validateFile } from '@/utils/imageUtils';
-import type { AiRasterLayer, BaseLayerAdjustments, BlurSettings, CloneStampSettings, ImageDocument, MaskElement, StrokeData, WatermarkObject, TextObject, ShapeObject, CropRect, BubbleObject, PerspectiveQuad, TranslationMaskObject } from '@/types';
+import type { AiRasterLayer, BaseLayerAdjustments, BlurSettings, ImageDocument, MaskElement, StrokeData, WatermarkObject, TextObject, ShapeObject, CropRect, BubbleObject, PerspectiveQuad, TranslationMaskObject } from '@/types';
 import { resolveVisualLayerOrder } from '@/utils/layerOrder';
 import { buildBaseCanvas, buildRasterLayerCanvas, createFloodMask, bakeStrokeIntoLayerSrc } from '@/utils/cleanupRaster';
 import { DropZone } from './DropZone';
@@ -62,6 +62,7 @@ import { getBrushTipRadii } from '@/utils/brushTip';
 import { RasterEffectOverlay, type RasterEffectOverlayHandle } from './RasterEffectOverlay';
 import { buildColorSamplingCanvas, sampleCanvasColor } from '@/utils/colorSampler';
 import { createCloneStampSession } from '@/utils/cloneStamp';
+import { createSharpenBrushSession, createSmudgeSession } from '@/utils/smudgeRaster';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -110,12 +111,13 @@ interface RasterEffectGesture {
 }
 
 interface CloneStampGesture {
+  tool: 'cloneStamp' | 'smudge' | 'sharpen';
   token: number;
   documentId: string;
   pointerId: number;
   pointerTarget: HTMLElement | null;
   session: RasterEffectSession | null;
-  settings: CloneStampSettings;
+  settings: { size: number; hardness: number };
   previewRunning: boolean;
   cancelled: boolean;
   released: boolean;
@@ -1165,7 +1167,7 @@ function CropOverlay({
 export function CanvasArea() {
   const {
     documents, activeDocIndex, setActiveDoc,
-    activeTool, setActiveTool, cleanupSettings, blurSettings, eyedropperSettings, setForegroundColor, cloneStampSettings,
+    activeTool, setActiveTool, cleanupSettings, blurSettings, eyedropperSettings, setForegroundColor, cloneStampSettings, smudgeSettings,
         addStroke, addMaskStroke, addMaskElement, addEraseElement, updateWatermark, updateText, updateTranslationMask, updateShape, updateBubble,
     selectLayer, updateCleanupSettings,
     selectedObject, setSelectedObject,
@@ -1188,6 +1190,7 @@ export function CanvasArea() {
     eyedropperSettings: state.eyedropperSettings,
     setForegroundColor: state.setForegroundColor,
     cloneStampSettings: state.cloneStampSettings,
+    smudgeSettings: state.smudgeSettings,
     addStroke: state.addStroke,
     addMaskStroke: state.addMaskStroke,
     addMaskElement: state.addMaskElement,
@@ -1293,7 +1296,7 @@ export function CanvasArea() {
   const [textEditorOverflowing, setTextEditorOverflowing] = useState(false);
   const [effectPreviewSlot, setEffectPreviewSlot] = useState<RasterEffectPreview | null>(null);
   const [activeEffectGestureSettings, setActiveEffectGestureSettings] = useState<BlurSettings | null>(null);
-  const [activeCloneGestureSettings, setActiveCloneGestureSettings] = useState<CloneStampSettings | null>(null);
+  const [activeCloneGestureSettings, setActiveCloneGestureSettings] = useState<{ size: number; hardness: number } | null>(null);
   const [cloneSourceAnchor, setCloneSourceAnchor] = useState<{ x: number; y: number } | null>(null);
   const shiftPressedRef = useRef(false);
   const altPressedRef = useRef(false);
@@ -1604,7 +1607,7 @@ export function CanvasArea() {
       if (!cursor) return;
       const store = useStore.getState();
       const tool = store.activeTool;
-      if (tool !== 'brush' && tool !== 'maskBrush' && tool !== 'eraser' && tool !== 'blur' && tool !== 'cloneStamp') {
+      if (tool !== 'brush' && tool !== 'maskBrush' && tool !== 'eraser' && tool !== 'blur' && tool !== 'cloneStamp' && tool !== 'smudge' && tool !== 'sharpen') {
         if (cursor.style.display !== 'none') cursor.style.display = 'none';
         return;
       }
@@ -1618,8 +1621,11 @@ export function CanvasArea() {
       const gestureSettings = isPainting.current ? brushGestureSettingsRef.current : null;
       const effectSettings = tool === 'blur' ? effectGestureRef.current?.settings ?? store.blurSettings : null;
       const cloneSettings = tool === 'cloneStamp' ? cloneGestureRef.current?.settings ?? store.cloneStampSettings : null;
-      const size = tool === 'blur' ? effectSettings!.brushSize : tool === 'cloneStamp' ? cloneSettings!.size : gestureSettings?.size ?? store.cleanupSettings.brushSize;
-      const hardness = tool === 'blur' ? effectSettings!.hardness : tool === 'cloneStamp' ? cloneSettings!.hardness : gestureSettings?.hardness ?? store.cleanupSettings.brushHardness;
+      const retouchSettings = tool === 'smudge' || tool === 'sharpen'
+        ? cloneGestureRef.current?.settings ?? (tool === 'smudge' ? store.smudgeSettings : { size: store.blurSettings.brushSize, hardness: store.blurSettings.hardness })
+        : null;
+      const size = tool === 'blur' ? effectSettings!.brushSize : tool === 'cloneStamp' ? cloneSettings!.size : retouchSettings?.size ?? gestureSettings?.size ?? store.cleanupSettings.brushSize;
+      const hardness = tool === 'blur' ? effectSettings!.hardness : tool === 'cloneStamp' ? cloneSettings!.hardness : retouchSettings?.hardness ?? gestureSettings?.hardness ?? store.cleanupSettings.brushHardness;
       const diameter = size * docH * ps * vp.scale;
       const { outer } = getBrushTipRadii(diameter, hardness);
       cursor.style.display = 'block';
@@ -1949,11 +1955,12 @@ export function CanvasArea() {
     if (points.length) gesture.session.append(points);
     void gesture.session.commit().then(() => {
       if (!gesture.cancelled) {
-        setClipboardInfo('Штамп применён · Ctrl+Z — отменить');
+        const label = gesture.tool === 'cloneStamp' ? 'Штамп' : gesture.tool === 'smudge' ? 'Палец' : 'Резкость';
+        setClipboardInfo(`${label} применён · Ctrl+Z — отменить`);
         scheduleThumbnailUpdate(gesture.documentId);
       }
     }).catch(error => {
-      if (!gesture.cancelled) setClipboardInfo(error instanceof Error ? error.message : 'Не удалось применить штамп');
+      if (!gesture.cancelled) setClipboardInfo(error instanceof Error ? error.message : 'Не удалось применить ретушь');
     }).finally(() => {
       if (cloneGestureRef.current === gesture) cloneGestureRef.current = null;
       releaseEffectPointer(gesture);
@@ -1990,12 +1997,13 @@ export function CanvasArea() {
     const token = ++cloneTokenRef.current;
     const pointerTarget = event.evt.target as HTMLElement;
     const gesture: CloneStampGesture = {
+      tool: 'cloneStamp',
       token,
       documentId: activeDoc.id,
       pointerId: event.evt.pointerId,
       pointerTarget,
       session: null,
-      settings,
+      settings: { size: settings.size, hardness: settings.hardness },
       previewRunning: false,
       cancelled: false,
       released: false,
@@ -2027,6 +2035,78 @@ export function CanvasArea() {
     }).catch(error => {
       if (cloneGestureRef.current !== gesture || gesture.cancelled) return;
       setClipboardInfo(error instanceof Error ? error.message : 'Не удалось начать штамп');
+      discardCloneGesture(gesture);
+    });
+  };
+
+  const startLocalRetouchGesture = (
+    tool: 'smudge' | 'sharpen',
+    event: Konva.KonvaEventObject<PointerEvent>,
+    point: { x: number; y: number },
+  ) => {
+    if (!activeDoc || cloneGestureRef.current) return;
+    const selected = activeDoc.selectedLayer;
+    if (selected?.type === 'mask') {
+      setClipboardInfo('Выберите базовый или растровый слой');
+      return;
+    }
+    const target: RasterEffectTarget = selected?.type === 'ai'
+      ? { type: 'ai', id: selected.id }
+      : { type: 'base', id: activeDoc.baseLayer.id };
+    const cursorSettings = tool === 'smudge'
+      ? { size: smudgeSettings.size, hardness: smudgeSettings.hardness }
+      : { size: blurSettings.brushSize, hardness: blurSettings.hardness };
+    const token = ++cloneTokenRef.current;
+    const pointerTarget = event.evt.target as HTMLElement;
+    const gesture: CloneStampGesture = {
+      tool,
+      token,
+      documentId: activeDoc.id,
+      pointerId: event.evt.pointerId,
+      pointerTarget,
+      session: null,
+      settings: cursorSettings,
+      previewRunning: false,
+      cancelled: false,
+      released: false,
+      committing: false,
+    };
+    cloneGestureRef.current = gesture;
+    pendingClonePointsRef.current = [];
+    lastClonePointRef.current = null;
+    clearEffectOverlay();
+    setActiveCloneGestureSettings(cursorSettings);
+    try { pointerTarget.setPointerCapture(event.evt.pointerId); } catch { gesture.pointerTarget = null; }
+    queueClonePoint(point);
+    const sessionPromise = tool === 'smudge'
+      ? createSmudgeSession({
+        documentId: activeDoc.id,
+        layer: target.type === 'base' ? { type: 'base' } : { type: 'ai', id: target.id },
+        settings: { ...smudgeSettings },
+        previewScale,
+      })
+      : createSharpenBrushSession({
+        documentId: activeDoc.id,
+        layer: target.type === 'base' ? { type: 'base' } : { type: 'ai', id: target.id },
+        settings: {
+          brushSize: blurSettings.brushSize,
+          hardness: blurSettings.hardness,
+          sharpenAmount: blurSettings.sharpenAmount,
+          sharpenRadius: blurSettings.sharpenRadius,
+        },
+        previewScale,
+      });
+    void sessionPromise.then(session => {
+      if (cloneGestureRef.current !== gesture || gesture.cancelled || cloneTokenRef.current !== token) {
+        session.cancel();
+        return;
+      }
+      gesture.session = session;
+      if (gesture.released) commitCloneGesture(gesture);
+      else scheduleClonePreview();
+    }).catch(error => {
+      if (cloneGestureRef.current !== gesture || gesture.cancelled) return;
+      setClipboardInfo(error instanceof Error ? error.message : 'Не удалось начать ретушь');
       discardCloneGesture(gesture);
     });
   };
@@ -2252,6 +2332,13 @@ export function CanvasArea() {
         strokeSource = { x: point.x + offset.x, y: point.y + offset.y };
       }
       startCloneGesture(e, point, strokeSource);
+      return;
+    }
+    if ((activeTool === 'smudge' || activeTool === 'sharpen') && activeDoc && e.evt.button === 0) {
+      const position = stageRef.current?.getPointerPosition();
+      const point = position && screenToImage(position, { viewport, imageWidth: imgW, imageHeight: imgH });
+      if (!point?.inside) return;
+      startLocalRetouchGesture(activeTool, e, point);
       return;
     }
     if (activeTool === 'text' && activeDoc && e.evt.button === 0 && e.target.getClassName() !== 'Text') {
@@ -2507,7 +2594,7 @@ export function CanvasArea() {
       return;
     }
     const cloneGesture = cloneGestureRef.current;
-    if (activeTool === 'cloneStamp' && cloneGesture && cloneGesture.pointerId === e.evt.pointerId) {
+    if (activeTool === cloneGesture?.tool && cloneGesture.pointerId === e.evt.pointerId) {
       const coalescedEvents = typeof e.evt.getCoalescedEvents === 'function' ? e.evt.getCoalescedEvents() : [];
       const nativeEvents = coalescedEvents.length ? coalescedEvents : [e.evt];
       const bounds = stage.container().getBoundingClientRect();
@@ -3243,7 +3330,7 @@ export function CanvasArea() {
           style={{
             display: 'block',
             touchAction: 'none',
-            cursor: activeTool === 'pan' ? 'grab' : (temporaryEyedropper || activeTool === 'eyedropper' || activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'wand' || activeTool === 'rectSelect' || activeTool === 'crop' || activeTool === 'blur') ? 'crosshair' : activeTool === 'text' ? 'text' : (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'cloneStamp') ? 'none' : 'default',
+            cursor: activeTool === 'pan' ? 'grab' : (temporaryEyedropper || activeTool === 'eyedropper' || activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'wand' || activeTool === 'rectSelect' || activeTool === 'crop' || activeTool === 'blur') ? 'crosshair' : activeTool === 'text' ? 'text' : (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'cloneStamp' || activeTool === 'smudge' || activeTool === 'sharpen') ? 'none' : 'default',
           }}
         >
           {/* Base image layer — key includes fontsVersion so the canvas
@@ -3699,15 +3786,17 @@ export function CanvasArea() {
       })()}
 
       {/* Brush cursor (positioned imperatively, no re-renders) */}
-      {!temporaryEyedropper && (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur' || activeTool === 'cloneStamp') && (
+      {!temporaryEyedropper && (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser' || activeTool === 'blur' || activeTool === 'cloneStamp' || activeTool === 'smudge' || activeTool === 'sharpen') && (
         <BrushCursor
           ref={cursorRef}
-          diameterPx={(activeTool === 'blur' ? activeEffectGestureSettings?.brushSize ?? blurSettings.brushSize : activeTool === 'cloneStamp' ? activeCloneGestureSettings?.size ?? cloneStampSettings.size : activeBrushGestureSettings?.size ?? cleanupSettings.brushSize)
+          diameterPx={(activeTool === 'blur' ? activeEffectGestureSettings?.brushSize ?? blurSettings.brushSize : activeTool === 'cloneStamp' ? activeCloneGestureSettings?.size ?? cloneStampSettings.size : activeTool === 'smudge' ? activeCloneGestureSettings?.size ?? smudgeSettings.size : activeTool === 'sharpen' ? activeCloneGestureSettings?.size ?? blurSettings.brushSize : activeBrushGestureSettings?.size ?? cleanupSettings.brushSize)
             * (activeDoc?.height ?? 1000) * previewScale * viewport.scale}
-          hardness={activeTool === 'blur' ? activeEffectGestureSettings?.hardness ?? blurSettings.hardness : activeTool === 'cloneStamp' ? activeCloneGestureSettings?.hardness ?? cloneStampSettings.hardness : activeBrushGestureSettings?.hardness ?? cleanupSettings.brushHardness}
+          hardness={activeTool === 'blur' ? activeEffectGestureSettings?.hardness ?? blurSettings.hardness : activeTool === 'cloneStamp' ? activeCloneGestureSettings?.hardness ?? cloneStampSettings.hardness : activeTool === 'smudge' ? activeCloneGestureSettings?.hardness ?? smudgeSettings.hardness : activeTool === 'sharpen' ? activeCloneGestureSettings?.hardness ?? blurSettings.hardness : activeBrushGestureSettings?.hardness ?? cleanupSettings.brushHardness}
           color={activeTool === 'maskBrush' ? '#ff8000'
             : activeTool === 'blur' ? '#5e9fe8'
               : activeTool === 'cloneStamp' ? '#6ee7b7'
+                : activeTool === 'smudge' ? '#c084fc'
+                  : activeTool === 'sharpen' ? '#fbbf24'
               : activeTool === 'eraser' ? '#ffffff' : activeBrushGestureSettings?.color ?? cleanupSettings.brushColor}
           showCrosshair
         />
