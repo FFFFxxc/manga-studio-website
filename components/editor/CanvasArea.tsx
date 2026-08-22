@@ -24,7 +24,13 @@ import {
   getCurvedArrowHandlePosition,
   getShapeGeometry,
 } from '@/utils/shapeGeometry';
-import { createTextNodeConfig } from '@/utils/textRenderer';
+import {
+  createTextNodeConfig,
+  isParagraphGlyphScaleGesture,
+  PARAGRAPH_TEXT_TRANSFORM_ANCHORS,
+  POINT_TEXT_TRANSFORM_ANCHORS,
+  reflowParagraphTextNode,
+} from '@/utils/textRenderer';
 import { isOpenShape } from '@/utils/shapePresets';
 import { PaintedShape } from './PaintedShape';
 import {
@@ -44,7 +50,7 @@ import { beginEditorOperation, useEditorUiStore } from '@/store/useEditorUiStore
 import { applyRasterEffectPreview } from '@/utils/rasterEffects';
 import { PerspectiveOverlay } from './PerspectiveOverlay';
 import { TextDraftOverlay } from './TextDraftOverlay';
-import { createTextDraftRect, type TextDraftRect } from '@/utils/textBox';
+import { createTextDraftRect, normalizeParagraphTransform, type TextDraftRect } from '@/utils/textBox';
 import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
 
 const MAX_PREVIEW_SIDE = 1800;
@@ -616,6 +622,9 @@ function TextNode({
 }) {
   const nodeRef = useRef<Konva.Text>(null);
   const trRef = useRef<Konva.Transformer>(null);
+  const [paragraphKeepRatio, setParagraphKeepRatio] = useState(false);
+  const transformModifierRef = useRef(false);
+  const stopTransformModifierTrackingRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (isSelected && !isEditing && !txt.locked && trRef.current && nodeRef.current) {
@@ -632,16 +641,91 @@ function TextNode({
     onChange({ x: e.target.x() / pW, y: e.target.y() / pH });
   };
 
+  const stopTransformModifierTracking = () => {
+    stopTransformModifierTrackingRef.current?.();
+    stopTransformModifierTrackingRef.current = null;
+    transformModifierRef.current = false;
+    setParagraphKeepRatio(false);
+    if (txt.textMode === 'paragraph') trRef.current?.keepRatio(false);
+  };
+
+  useEffect(() => stopTransformModifierTracking, []);
+
+  const handleTransformStart = (event: Konva.KonvaEventObject<Event>) => {
+    onBeforeChange();
+    if (txt.textMode !== 'paragraph') return;
+
+    stopTransformModifierTracking();
+    const nativeEvent = event.evt as Event & { ctrlKey?: boolean; metaKey?: boolean };
+    const setTransformModifier = (pressed: boolean) => {
+      transformModifierRef.current = pressed;
+      const keepRatio = isParagraphGlyphScaleGesture(trRef.current?.getActiveAnchor(), pressed);
+      setParagraphKeepRatio(keepRatio);
+      trRef.current?.keepRatio(keepRatio);
+    };
+    setTransformModifier(Boolean(nativeEvent?.ctrlKey || nativeEvent?.metaKey));
+    const handleKeyChange = (keyEvent: KeyboardEvent) => {
+      setTransformModifier(keyEvent.ctrlKey || keyEvent.metaKey);
+    };
+    const handleBlur = () => {
+      setTransformModifier(false);
+    };
+    window.addEventListener('keydown', handleKeyChange);
+    window.addEventListener('keyup', handleKeyChange);
+    window.addEventListener('blur', handleBlur);
+    stopTransformModifierTrackingRef.current = () => {
+      window.removeEventListener('keydown', handleKeyChange);
+      window.removeEventListener('keyup', handleKeyChange);
+      window.removeEventListener('blur', handleBlur);
+    };
+  };
+
+  const shouldScaleParagraphGlyphs = () => isParagraphGlyphScaleGesture(
+    trRef.current?.getActiveAnchor(),
+    transformModifierRef.current,
+  );
+
+  const handleTransform = () => {
+    const node = nodeRef.current;
+    if (!node || txt.textMode !== 'paragraph' || shouldScaleParagraphGlyphs()) return;
+    reflowParagraphTextNode(node);
+  };
+
   const handleTransformEnd = () => {
     const node = nodeRef.current;
-    if (!node) return;
-    onChange({
-      x: node.x() / pW,
-      y: node.y() / pH,
-      scaleX: node.scaleX(),
-      scaleY: node.scaleY(),
-      rotation: node.rotation(),
-    });
+    if (!node) {
+      stopTransformModifierTracking();
+      return;
+    }
+    if (txt.textMode === 'paragraph' && !shouldScaleParagraphGlyphs()) {
+      reflowParagraphTextNode(node);
+      const normalized = normalizeParagraphTransform(
+        txt,
+        {
+          x: node.x(),
+          y: node.y(),
+          width: node.width(),
+          height: node.height(),
+          scaleX: node.scaleX(),
+          scaleY: node.scaleY(),
+        },
+        { width: pW, height: pH },
+      );
+      node.width((normalized.width ?? txt.width) * pW);
+      node.height((normalized.height ?? txt.height ?? 0) * pH);
+      node.scaleX(1);
+      node.scaleY(1);
+      onChange({ ...normalized, rotation: node.rotation() });
+    } else {
+      onChange({
+        x: node.x() / pW,
+        y: node.y() / pH,
+        scaleX: node.scaleX(),
+        scaleY: node.scaleY(),
+        rotation: node.rotation(),
+      });
+    }
+    stopTransformModifierTracking();
   };
 
   if (!txt.visible) return null;
@@ -660,7 +744,8 @@ function TextNode({
         onDblTap={onEditRequest}
         onContextMenu={onContextMenu}
         onDragStart={txt.locked ? undefined : onBeforeChange}
-        onTransformStart={txt.locked ? undefined : onBeforeChange}
+        onTransformStart={txt.locked ? undefined : handleTransformStart}
+        onTransform={txt.locked ? undefined : handleTransform}
         onDragEnd={handleDragEnd}
         onTransformEnd={handleTransformEnd}
       />
@@ -672,8 +757,10 @@ function TextNode({
             return newBox;
           }}
           rotateEnabled
-          keepRatio
-          enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
+          keepRatio={txt.textMode !== 'paragraph' || paragraphKeepRatio}
+          enabledAnchors={txt.textMode === 'paragraph'
+            ? [...PARAGRAPH_TEXT_TRANSFORM_ANCHORS]
+            : [...POINT_TEXT_TRANSFORM_ANCHORS]}
         />
       )}
     </>
@@ -2627,7 +2714,7 @@ export function CanvasArea() {
                     isSelected={selectedObject?.id === txt.id}
                     isEditing={inlineEditingTextId === txt.id}
                     onSelect={() => setSelectedObject({ id: txt.id, type: 'text' })}
-                    onChange={updates => updateText(txt.id, updates, { moveGroup: Boolean(txt.groupId) })}
+                    onChange={updates => updateText(txt.id, updates, { history: false, moveGroup: Boolean(txt.groupId) })}
                     onBeforeChange={pushHistory}
                     onContextMenu={e => {
                       e.evt.preventDefault();

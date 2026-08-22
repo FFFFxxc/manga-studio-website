@@ -2,6 +2,49 @@ import Konva from 'konva';
 import type { TextConfig } from 'konva/lib/shapes/Text';
 import type { ExportSettings, TextObject } from '@/types';
 
+export const PARAGRAPH_TEXT_TRANSFORM_ANCHORS = [
+  'top-left', 'top-center', 'top-right',
+  'middle-left', 'middle-right',
+  'bottom-left', 'bottom-center', 'bottom-right',
+] as const;
+
+export const POINT_TEXT_TRANSFORM_ANCHORS = [
+  'top-left', 'top-right', 'bottom-left', 'bottom-right',
+] as const;
+
+interface ResizableTextNode {
+  width(): number;
+  width(value: number): unknown;
+  height(): number;
+  height(value: number): unknown;
+  scaleX(): number;
+  scaleX(value: number): unknown;
+  scaleY(): number;
+  scaleY(value: number): unknown;
+}
+
+export function isParagraphGlyphScaleGesture(
+  activeAnchor: string | null | undefined,
+  modifierPressed: boolean,
+): boolean {
+  return modifierPressed && (
+    activeAnchor === 'top-left'
+    || activeAnchor === 'top-right'
+    || activeAnchor === 'bottom-left'
+    || activeAnchor === 'bottom-right'
+  );
+}
+
+/** Bake Transformer scale into the text box so Konva re-wraps without stretching glyphs. */
+export function reflowParagraphTextNode(node: ResizableTextNode): void {
+  const scaleX = Number.isFinite(node.scaleX()) ? node.scaleX() : 1;
+  const scaleY = Number.isFinite(node.scaleY()) ? node.scaleY() : 1;
+  node.width(Math.max(1, Math.abs(node.width() * scaleX)));
+  node.height(Math.max(1, Math.abs(node.height() * scaleY)));
+  node.scaleX(1);
+  node.scaleY(1);
+}
+
 /**
  * Text coordinates/font size/width are normalized to the source document.
  * Stroke and shadow sizes are stored in source-document pixels, so previews
