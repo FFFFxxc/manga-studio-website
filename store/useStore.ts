@@ -30,6 +30,7 @@ import type {
   PerspectiveQuad,
   BlurSettings,
   EyedropperSettings,
+  CloneStampSettings,
   CropSettings,
   TranslationMaskSettings,
   TranslationMaskObject,
@@ -120,6 +121,14 @@ const defaultBlurSettings: BlurSettings = {
 
 const defaultEyedropperSettings: EyedropperSettings = {
   sample: 'all',
+};
+
+const defaultCloneStampSettings: CloneStampSettings = {
+  size: 0.08,
+  hardness: 0.75,
+  opacity: 1,
+  aligned: true,
+  sample: 'current',
 };
 
 const defaultTranslationMaskSettings: TranslationMaskSettings = {
@@ -220,6 +229,7 @@ export interface AppState {
   blurSettings: BlurSettings;
   eyedropperSettings: EyedropperSettings;
   foregroundColor: string;
+  cloneStampSettings: CloneStampSettings;
   translationMaskSettings: TranslationMaskSettings;
   recentColors: string[];
   exportSettings: ExportSettings;
@@ -331,6 +341,7 @@ export interface AppState {
   updateEyedropperSettings: (updates: Partial<EyedropperSettings>) => void;
   /** Updates defaults only; existing document objects are never recolored. */
   setForegroundColor: (color: string) => void;
+  updateCloneStampSettings: (updates: Partial<CloneStampSettings>) => void;
   updateTranslationMaskSettings: (updates: Partial<TranslationMaskSettings>) => void;
   rememberTextColor: (color: string) => void;
   updateExportSettings: (updates: Partial<ExportSettings>) => void;
@@ -362,6 +373,7 @@ export const useStore = create<AppState>((set, get) => ({
   blurSettings: defaultBlurSettings,
   eyedropperSettings: defaultEyedropperSettings,
   foregroundColor: '#000000',
+  cloneStampSettings: defaultCloneStampSettings,
   translationMaskSettings: defaultTranslationMaskSettings,
   recentColors: loadStoredRecentColors(),
   exportSettings: defaultExportSettings,
@@ -1422,6 +1434,7 @@ export const useStore = create<AppState>((set, get) => ({
       textSettings: { ...state.textSettings, fill: normalized },
     };
   }),
+  updateCloneStampSettings: (u) => set(s => ({ cloneStampSettings: { ...s.cloneStampSettings, ...u } })),
   updateTranslationMaskSettings: (u) => set(s => ({ translationMaskSettings: { ...s.translationMaskSettings, ...u } })),
   rememberTextColor: (color) => set(state => {
     const recentColors = addRecentColor(state.recentColors, color);

@@ -7,7 +7,10 @@ const colorMocks = vi.hoisted(() => ({
   sampleCanvasColor: vi.fn(),
 }));
 
+const cloneMocks = vi.hoisted(() => ({ createCloneStampSession: vi.fn() }));
+
 vi.mock('@/utils/colorSampler', () => colorMocks);
+vi.mock('@/utils/cloneStamp', () => cloneMocks);
 
 vi.mock('react-konva', () => {
   interface Props {
@@ -106,6 +109,7 @@ describe('CanvasArea eyedropper interaction', () => {
     colorMocks.buildColorSamplingCanvas.mockResolvedValue(document.createElement('canvas'));
     colorMocks.sampleCanvasColor.mockReset();
     colorMocks.sampleCanvasColor.mockReturnValue({ hex: '#123456', rgba: [18, 52, 86, 255] });
+    cloneMocks.createCloneStampSession.mockReset();
   });
 
   afterEach(() => {
@@ -141,5 +145,33 @@ describe('CanvasArea eyedropper interaction', () => {
     expect(useStore.getState().activeTool).toBe('brush');
     expect(useStore.getState().documents[0].past).toHaveLength(0);
     fireEvent.keyUp(document.body, { key: 'Alt' });
+  });
+
+  it('selects a clone source with Alt and commits one undoable stamp', async () => {
+    const session = {
+      append: vi.fn(),
+      renderPreview: vi.fn(async () => null),
+      commit: vi.fn(async () => {
+        useStore.getState().pushHistory();
+        return useStore.getState().documents[0].baseLayer.id;
+      }),
+      cancel: vi.fn(),
+    };
+    cloneMocks.createCloneStampSession.mockResolvedValue(session);
+    useStore.setState({ activeTool: 'cloneStamp' });
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('eyedropper-stage');
+
+    fireEvent.pointerDown(stage, { pointerId: 8, button: 0, clientX: 260, clientY: 260, altKey: true });
+    expect(cloneMocks.createCloneStampSession).not.toHaveBeenCalled();
+    expect(useStore.getState().documents[0].past).toHaveLength(0);
+
+    fireEvent.pointerDown(stage, { pointerId: 9, button: 0, clientX: 360, clientY: 320 });
+    await waitFor(() => expect(cloneMocks.createCloneStampSession).toHaveBeenCalledTimes(1));
+    fireEvent.pointerUp(window, { pointerId: 9 });
+
+    await waitFor(() => expect(session.commit).toHaveBeenCalledTimes(1));
+    expect(session.append).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().documents[0].past).toHaveLength(1);
   });
 });

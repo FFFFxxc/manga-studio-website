@@ -16,6 +16,7 @@ const TOOL_LABELS: Partial<Record<ActiveTool, string>> = {
   crop: 'Кадрирование / Размер',
   blur: 'Размытие / Пикселизация',
   eyedropper: 'Пипетка',
+  cloneStamp: 'Штамп',
   select: 'Объект',
 };
 
@@ -316,6 +317,21 @@ function EyedropperOptions() {
   );
 }
 
+function CloneStampOptions() {
+  const settings = useStore(state => state.cloneStampSettings);
+  const update = useStore(state => state.updateCloneStampSettings);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <RangeField label="Размер" value={settings.size} min={0.003} max={0.35} step={0.005} onChange={size => update({ size })} format={value => `${Math.round(value * 1000) / 10}%`} />
+      <RangeField label="Жёсткость" value={settings.hardness} min={0} max={1} step={0.05} onChange={hardness => update({ hardness })} format={value => `${Math.round(value * 100)}%`} />
+      <RangeField label="Непрозрачность" value={settings.opacity} min={0.05} max={1} step={0.05} onChange={opacity => update({ opacity })} format={value => `${Math.round(value * 100)}%`} />
+      <Field label="Образец"><select value={settings.sample} onChange={event => update({ sample: event.target.value as typeof settings.sample })} style={fieldStyle}><option value="current">Текущий слой</option><option value="all">Все слои</option></select></Field>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><input type="checkbox" checked={settings.aligned} onChange={event => update({ aligned: event.target.checked })} />Выровненный источник</label>
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Alt/Option + клик задаёт источник. Мазок записывается одним шагом Undo и обрезается активным выделением.</span>
+    </div>
+  );
+}
+
 function TranslationMaskOptions({ objectId }: { objectId: string }) {
   const store = useStore();
   const document = store.documents[store.activeDocIndex];
@@ -400,8 +416,9 @@ export function ToolOptionsPopoverHost() {
       {effectiveTool === 'crop' && <CropOptions />}
       {effectiveTool === 'blur' && <BlurOptions />}
       {effectiveTool === 'eyedropper' && <EyedropperOptions />}
+      {effectiveTool === 'cloneStamp' && <CloneStampOptions />}
       {maskId && <TranslationMaskOptions objectId={maskId} />}
-      {!maskId && !['text', 'brush', 'maskBrush', 'eraser', 'crop', 'blur', 'eyedropper'].includes(effectiveTool) && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Для этого объекта доступны трансформация и действия в контекстном меню слоя.</div>}
+      {!maskId && !['text', 'brush', 'maskBrush', 'eraser', 'crop', 'blur', 'eyedropper', 'cloneStamp'].includes(effectiveTool) && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Для этого объекта доступны трансформация и действия в контекстном меню слоя.</div>}
     </FloatingPanel>
   );
 }

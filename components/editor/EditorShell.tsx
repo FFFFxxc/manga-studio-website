@@ -228,6 +228,16 @@ export function EditorShell() {
                 hardness: Math.max(0, Math.min(1, state.blurSettings.hardness + shortcut.delta * 0.05)),
               });
             }
+          } else if (activeTool === 'cloneStamp') {
+            if (shortcut.property === 'size') {
+              state.updateCloneStampSettings({
+                size: Math.max(0.003, Math.min(0.35, state.cloneStampSettings.size + shortcut.delta * 0.005)),
+              });
+            } else {
+              state.updateCloneStampSettings({
+                hardness: Math.max(0, Math.min(1, state.cloneStampSettings.hardness + shortcut.delta * 0.05)),
+              });
+            }
           } else if (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser') {
             if (shortcut.property === 'size') {
               state.updateCleanupSettings({

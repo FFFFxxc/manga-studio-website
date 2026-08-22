@@ -23,7 +23,7 @@ const selectionModes: Array<{ mode: SelectionMode; label: string; hint: string }
 
 export function ToolOptionsBar() {
   const state = useStore();
-  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, eyedropperSettings, updateEyedropperSettings, foregroundColor, setForegroundColor, selectedObject, documents, activeDocIndex } = state;
+  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, eyedropperSettings, updateEyedropperSettings, foregroundColor, setForegroundColor, cloneStampSettings, updateCloneStampSettings, selectedObject, documents, activeDocIndex } = state;
   const doc = activeDocIndex >= 0 ? documents[activeDocIndex] : null;
   const isMarking = activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser';
   const isEffect = activeTool === 'blur';
@@ -137,7 +137,14 @@ export function ToolOptionsBar() {
         <input aria-label="Основной цвет" type="color" value={foregroundColor} onChange={event => setForegroundColor(event.target.value)} style={{ width: 30, height: 26, cursor: 'pointer' }} />
         <span>Кликните по холсту · Alt/Option временно включает пипетку для кисти</span>
       </>}
-      {activeTool === 'cloneStamp' && <span>Alt/Option + клик — выбрать источник · S</span>}
+      {activeTool === 'cloneStamp' && <>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Размер <EditorSlider label="Размер штампа" min={3} max={300} step={2} value={Math.round(cloneStampSettings.size * 1000)} onChange={value => updateCloneStampSettings({ size: value / 1000 })} style={{ width: 80 }} /><span>{Math.round(cloneStampSettings.size * 1000)}</span></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Край <EditorSlider label="Жёсткость штампа" min={0} max={100} step={5} value={Math.round(cloneStampSettings.hardness * 100)} onChange={value => updateCloneStampSettings({ hardness: value / 100 })} style={{ width: 70 }} /><span>{Math.round(cloneStampSettings.hardness * 100)}%</span></label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Непрозр. <EditorSlider label="Непрозрачность штампа" min={5} max={100} step={5} value={Math.round(cloneStampSettings.opacity * 100)} onChange={value => updateCloneStampSettings({ opacity: value / 100 })} style={{ width: 65 }} /></label>
+        <select aria-label="Образец штампа" value={cloneStampSettings.sample} onChange={event => updateCloneStampSettings({ sample: event.target.value as typeof cloneStampSettings.sample })}><option value="current">Текущий слой</option><option value="all">Все слои</option></select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={cloneStampSettings.aligned} onChange={event => updateCloneStampSettings({ aligned: event.target.checked })} />Выровненный</label>
+        <span>Alt/Option + клик — выбрать источник · S</span>
+      </>}
       {activeTool === 'smudge' && <span>Переносит цвет по направлению движения · R</span>}
       {activeTool === 'sharpen' && <span>Повышает локальную резкость кистью · R</span>}
       {activeTool === 'pan' && <span>Перетаскивайте холст. Удерживайте Space для временного режима.</span>}

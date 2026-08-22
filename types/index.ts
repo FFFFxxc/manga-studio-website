@@ -510,6 +510,14 @@ export interface EyedropperSettings {
   sample: 'all' | 'current';
 }
 
+export interface CloneStampSettings {
+  size: number;
+  hardness: number;
+  opacity: number;
+  aligned: boolean;
+  sample: 'current' | 'all';
+}
+
 export type RasterEffectMode = 'blur' | 'pixelate' | 'noise' | 'sharpen';
 
 export interface RasterEffectParameters {
