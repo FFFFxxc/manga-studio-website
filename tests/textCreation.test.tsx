@@ -437,4 +437,24 @@ describe('text creation drafts', () => {
     fireEvent.pointerUp(stage, { button: 0, pointerId: 31, clientX: 320, clientY: 240 });
     expect(screen.getByRole('textbox').getAttribute('data-text-mode')).toBe('paragraph');
   });
+
+  it('keeps a second middle-button pointer out of an active text gesture', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 41, clientX: 200, clientY: 160 });
+    const viewportBeforeSecondPointer = { ...useStore.getState().viewport };
+
+    fireEvent.pointerDown(stage, { button: 1, pointerId: 42, clientX: 350, clientY: 260 });
+    fireEvent.pointerMove(stage, { button: 1, pointerId: 42, clientX: 450, clientY: 360 });
+    fireEvent.pointerCancel(stage, { pointerId: 42, clientX: 450, clientY: 360 });
+
+    expect(useStore.getState().viewport).toEqual(viewportBeforeSecondPointer);
+    expect(screen.getByTestId('text-draft-overlay')).toBeTruthy();
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 41, clientX: 500, clientY: 320 });
+    fireEvent.pointerUp(stage, { button: 0, pointerId: 41, clientX: 500, clientY: 320 });
+
+    const editor = screen.getByRole('textbox');
+    expect(editor.getAttribute('data-text-mode')).toBe('paragraph');
+    expect(Number.parseFloat(editor.style.width)).toBeCloseTo(300, 5);
+  });
 });

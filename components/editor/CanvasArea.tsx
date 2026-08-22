@@ -1579,13 +1579,13 @@ export function CanvasArea() {
   }, [inlineEditingTextId, pendingTextDraft]);
 
   const handleMouseDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
+    if (activeTool === 'text' && textPointerGestureRef.current) return;
     if (activeTool === 'pan' || e.evt.button === 1) {
       isPanning.current = true;
       panStart.current = { x: e.evt.clientX, y: e.evt.clientY };
       panVpStart.current = { x: viewport.x, y: viewport.y };
       return;
     }
-    if (activeTool === 'text' && textPointerGestureRef.current) return;
     if (activeTool === 'text' && activeDoc && e.evt.button === 0 && e.target.getClassName() !== 'Text') {
       const stage = stageRef.current;
       const position = stage?.getPointerPosition();
@@ -1774,19 +1774,19 @@ export function CanvasArea() {
     if (!stage) return;
     const pos = stage.getPointerPosition();
 
-    if (isPanning.current) {
-      const dx = e.evt.clientX - panStart.current.x;
-      const dy = e.evt.clientY - panStart.current.y;
-      setViewport({ x: panVpStart.current.x + dx, y: panVpStart.current.y + dy });
-      return;
-    }
-
     const textGesture = textPointerGestureRef.current;
     if (textGesture) {
       if (textGesture.pointerId === e.evt.pointerId) {
         const point = nativeTextPoint(e.evt);
         if (point) queueTextGeometry(point);
       }
+      return;
+    }
+
+    if (isPanning.current) {
+      const dx = e.evt.clientX - panStart.current.x;
+      const dy = e.evt.clientY - panStart.current.y;
+      setViewport({ x: panVpStart.current.x + dx, y: panVpStart.current.y + dy });
       return;
     }
 
@@ -1886,12 +1886,12 @@ export function CanvasArea() {
   };
 
   const handleMouseUp = (e?: Konva.KonvaEventObject<PointerEvent>) => {
-    isPanning.current = false;
     const textGesture = textPointerGestureRef.current;
     if (textGesture) {
       if (e && textGesture.pointerId === e.evt.pointerId) finishTextGeometryDraft(e.evt);
       return;
     }
+    isPanning.current = false;
     if (isEffectPainting.current) {
       isEffectPainting.current = false;
       const points = [...effectPointsRef.current];
