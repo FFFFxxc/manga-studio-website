@@ -46,14 +46,20 @@ import {
 } from '@/utils/pageImportPreference';
 import { toKonvaAdjustmentValues } from '@/utils/konvaAdjustments';
 import { toast } from '@/hooks/use-toast';
-import { beginEditorOperation, useEditorUiStore } from '@/store/useEditorUiStore';
-import { applyRasterEffectPreview } from '@/utils/rasterEffects';
+import { useEditorUiStore } from '@/store/useEditorUiStore';
+import {
+  createRasterEffectSession,
+  type RasterEffectPreview,
+  type RasterEffectSession,
+  type RasterEffectTarget,
+} from '@/utils/rasterEffectSession';
 import { PerspectiveOverlay } from './PerspectiveOverlay';
 import { TextDraftOverlay } from './TextDraftOverlay';
 import { createTextDraftRect, normalizeParagraphTransform, type TextDraftRect } from '@/utils/textBox';
 import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
 import { BrushCursor } from './BrushCursor';
 import { getBrushTipRadii } from '@/utils/brushTip';
+import { RasterEffectOverlay, type RasterEffectOverlayHandle } from './RasterEffectOverlay';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -85,6 +91,19 @@ interface BrushGestureSettings {
   opacity: number;
   mode: NonNullable<StrokeData['mode']>;
   purpose: NonNullable<StrokeData['purpose']>;
+}
+
+interface RasterEffectGesture {
+  token: number;
+  documentId: string;
+  pointerId: number;
+  pointerTarget: HTMLElement | null;
+  session: RasterEffectSession | null;
+  acceptsPoints: boolean;
+  previewRunning: boolean;
+  cancelled: boolean;
+  released: boolean;
+  committing: boolean;
 }
 
 function scaleToFit(w: number, h: number, maxSide: number): number {
@@ -1201,9 +1220,13 @@ export function CanvasArea() {
   const textPointerGestureRef = useRef<TextPointerGesture | null>(null);
   const textPointerTargetRef = useRef<HTMLElement | null>(null);
   const textDraftFrameRef = useRef<number | null>(null);
-  const isEffectPainting = useRef(false);
-  const effectPointsRef = useRef<number[]>([]);
-  const effectBusyRef = useRef(false);
+  const effectGestureRef = useRef<RasterEffectGesture | null>(null);
+  const effectTokenRef = useRef(0);
+  const pendingEffectPointsRef = useRef<number[]>([]);
+  const lastEffectPointRef = useRef<{ x: number; y: number } | null>(null);
+  const effectFrameRef = useRef<number | null>(null);
+  const effectOverlayRef = useRef<RasterEffectOverlayHandle>(null);
+  const effectPreviewSlotRef = useRef<RasterEffectPreview | null>(null);
   const finishPointerRef = useRef<(() => void) | null>(null);
   const finishTextPointerRef = useRef<((event?: PointerEvent) => void) | null>(null);
   const cancelTextPointerRef = useRef<(() => void) | null>(null);
@@ -1242,6 +1265,7 @@ export function CanvasArea() {
   const [textDraftRect, setTextDraftRect] = useState<TextDraftRect | null>(null);
   const [pendingTextDraft, setPendingTextDraft] = useState<PendingTextDraft | null>(null);
   const [textEditorOverflowing, setTextEditorOverflowing] = useState(false);
+  const [effectPreviewSlot, setEffectPreviewSlot] = useState<RasterEffectPreview | null>(null);
   const shiftPressedRef = useRef(false);
   const checkerPattern = useRef<HTMLCanvasElement | null>(null);
   if (typeof document !== 'undefined' && !checkerPattern.current) checkerPattern.current = makeCheckerPattern();
@@ -1367,6 +1391,39 @@ export function CanvasArea() {
     liveLineRef.current?.getLayer()?.batchDraw();
   };
 
+  const clearEffectOverlay = useCallback(() => {
+    effectOverlayRef.current?.clear();
+    effectPreviewSlotRef.current = null;
+    setEffectPreviewSlot(null);
+  }, []);
+
+  const releaseEffectPointer = (gesture: RasterEffectGesture) => {
+    try { gesture.pointerTarget?.releasePointerCapture(gesture.pointerId); } catch { /* already released */ }
+    gesture.pointerTarget = null;
+  };
+
+  const cancelEffectGesture = useCallback(() => {
+    const gesture = effectGestureRef.current;
+    if (gesture?.committing) {
+      releaseEffectPointer(gesture);
+      return;
+    }
+    effectTokenRef.current += 1;
+    if (effectFrameRef.current !== null) {
+      window.cancelAnimationFrame(effectFrameRef.current);
+      effectFrameRef.current = null;
+    }
+    if (gesture) {
+      gesture.cancelled = true;
+      gesture.session?.cancel();
+      releaseEffectPointer(gesture);
+    }
+    effectGestureRef.current = null;
+    pendingEffectPointsRef.current = [];
+    lastEffectPointRef.current = null;
+    clearEffectOverlay();
+  }, [clearEffectOverlay]);
+
   const finishPolyLasso = useCallback((mode: 'replace' | 'add' | 'subtract') => {
     const points = [...polyLassoPoints.current];
     cancelPolyLasso();
@@ -1387,22 +1444,20 @@ export function CanvasArea() {
   // live only in the editor overlay and are never serialized into layer pixels.
   useEffect(() => {
     cancelBrushGesture();
-    isEffectPainting.current = false;
-    effectPointsRef.current = [];
+    cancelEffectGesture();
     isLassoing.current = false;
     lassoPoints.current = [];
     isRectSelecting.current = false;
     liveLassoRef.current?.setAttrs({ points: [], visible: false });
     liveRectRef.current?.setAttrs({ visible: false });
     liveLassoRef.current?.getLayer()?.batchDraw();
-  }, [activeTool]);
+  }, [activeTool, cancelEffectGesture]);
 
   useEffect(() => {
     const cancelTransient = () => {
       cancelPolyLasso();
       cancelBrushGesture();
-      isEffectPainting.current = false;
-      effectPointsRef.current = [];
+      cancelEffectGesture();
       isLassoing.current = false;
       lassoPoints.current = [];
       isRectSelecting.current = false;
@@ -1412,11 +1467,12 @@ export function CanvasArea() {
     };
     window.addEventListener('manga-editor-cancel-transient', cancelTransient);
     return () => window.removeEventListener('manga-editor-cancel-transient', cancelTransient);
-  }, [cancelPolyLasso]);
+  }, [cancelEffectGesture, cancelPolyLasso]);
   useEffect(() => {
     cancelPolyLasso();
     cancelBrushGesture();
-  }, [activeDocIndex, cancelPolyLasso]);
+    cancelEffectGesture();
+  }, [activeDocIndex, cancelEffectGesture, cancelPolyLasso]);
 
   // Fit to screen
   const fitToScreen = useCallback(() => {
@@ -1436,6 +1492,7 @@ export function CanvasArea() {
 
   useEffect(() => () => {
     if (brushFrameRef.current !== null) window.cancelAnimationFrame(brushFrameRef.current);
+    if (effectFrameRef.current !== null) window.cancelAnimationFrame(effectFrameRef.current);
     if (textDraftFrameRef.current !== null) window.cancelAnimationFrame(textDraftFrameRef.current);
   }, []);
 
@@ -1591,17 +1648,141 @@ export function CanvasArea() {
     }
   };
 
-  const applyEffectPreview = (points?: number[]) => {
-    if (effectBusyRef.current) return;
-    effectBusyRef.current = true;
-    void applyRasterEffectPreview(points).then(() => {
-      beginEditorOperation('blur', blurSettings.mode === 'pixelate' ? 'Пикселизация' : blurSettings.mode === 'noise' ? 'Шум' : 'Размытие', {
-        commit: () => setClipboardInfo('Эффект применён'),
-        cancel: () => useStore.getState().rollbackPendingHistory(),
+  const scheduleEffectPreview = () => {
+    const scheduledGesture = effectGestureRef.current;
+    if (!scheduledGesture || effectFrameRef.current !== null || scheduledGesture.previewRunning) return;
+    effectFrameRef.current = window.requestAnimationFrame(() => {
+      effectFrameRef.current = null;
+      const gesture = effectGestureRef.current;
+      if (!gesture || gesture.cancelled || gesture.released || gesture.committing || !gesture.session) return;
+      const points = pendingEffectPointsRef.current;
+      pendingEffectPointsRef.current = [];
+      if (points.length) gesture.session.append(points);
+      gesture.previewRunning = true;
+      void gesture.session.renderPreview().then(preview => {
+        if (!preview || effectGestureRef.current !== gesture || gesture.cancelled || gesture.released) return;
+        if (!effectPreviewSlotRef.current) {
+          effectPreviewSlotRef.current = preview;
+          setEffectPreviewSlot(preview);
+        } else {
+          effectPreviewSlotRef.current = preview;
+          effectOverlayRef.current?.show(preview);
+        }
+      }).catch(error => {
+        if (effectGestureRef.current === gesture && !gesture.cancelled) {
+          setClipboardInfo(error instanceof Error ? error.message : 'Не удалось показать эффект');
+          cancelEffectGesture();
+        }
+      }).finally(() => {
+        gesture.previewRunning = false;
+        if (effectGestureRef.current === gesture && pendingEffectPointsRef.current.length) scheduleEffectPreview();
       });
-      setClipboardInfo('Превью эффекта · Enter применить, Esc отменить');
-    }).catch(error => setClipboardInfo(error instanceof Error ? error.message : 'Не удалось применить эффект'))
-      .finally(() => { effectBusyRef.current = false; });
+    });
+  };
+
+  const queueEffectPoint = (point: { x: number; y: number }) => {
+    const last = lastEffectPointRef.current;
+    if (last) {
+      const distancePx = Math.hypot(
+        (point.x - last.x) * imgW * viewport.scale,
+        (point.y - last.y) * imgH * viewport.scale,
+      );
+      if (distancePx < 1.25) return;
+    }
+    lastEffectPointRef.current = point;
+    pendingEffectPointsRef.current.push(point.x, point.y);
+    if (effectGestureRef.current?.session) scheduleEffectPreview();
+  };
+
+  const commitEffectGesture = (gesture: RasterEffectGesture) => {
+    if (effectGestureRef.current !== gesture || gesture.cancelled || gesture.committing || !gesture.session) return;
+    gesture.committing = true;
+    if (effectFrameRef.current !== null) {
+      window.cancelAnimationFrame(effectFrameRef.current);
+      effectFrameRef.current = null;
+    }
+    const points = pendingEffectPointsRef.current;
+    pendingEffectPointsRef.current = [];
+    if (points.length) gesture.session.append(points);
+    void gesture.session.commit().then(() => {
+      if (!gesture.cancelled) {
+        setClipboardInfo('Эффект применён · Ctrl+Z — отменить');
+        scheduleThumbnailUpdate(gesture.documentId);
+      }
+    }).catch(error => {
+      if (!gesture.cancelled) {
+        setClipboardInfo(error instanceof Error ? error.message : 'Не удалось применить эффект');
+      }
+    }).finally(() => {
+      if (effectGestureRef.current === gesture) effectGestureRef.current = null;
+      releaseEffectPointer(gesture);
+      pendingEffectPointsRef.current = [];
+      lastEffectPointRef.current = null;
+      clearEffectOverlay();
+    });
+  };
+
+  const finishEffectGesture = () => {
+    const gesture = effectGestureRef.current;
+    if (!gesture || gesture.cancelled || gesture.released) return false;
+    gesture.released = true;
+    releaseEffectPointer(gesture);
+    if (gesture.session) commitEffectGesture(gesture);
+    return true;
+  };
+
+  const startEffectGesture = (
+    event: Konva.KonvaEventObject<PointerEvent>,
+    point: { x: number; y: number },
+  ) => {
+    if (!activeDoc || effectGestureRef.current) return;
+    const selected = activeDoc.selectedLayer;
+    if (selected?.type === 'mask') {
+      setClipboardInfo('Выберите базовый или растровый слой');
+      return;
+    }
+    const target: RasterEffectTarget = selected?.type === 'ai'
+      ? { type: 'ai', id: selected.id }
+      : { type: 'base', id: activeDoc.baseLayer.id };
+    const token = ++effectTokenRef.current;
+    const pointerTarget = event.evt.target as HTMLElement;
+    const gesture: RasterEffectGesture = {
+      token,
+      documentId: activeDoc.id,
+      pointerId: event.evt.pointerId,
+      pointerTarget,
+      session: null,
+      acceptsPoints: blurSettings.gesture === 'brush' && blurSettings.applyTo !== 'selection',
+      previewRunning: false,
+      cancelled: false,
+      released: false,
+      committing: false,
+    };
+    effectGestureRef.current = gesture;
+    pendingEffectPointsRef.current = [];
+    lastEffectPointRef.current = null;
+    clearEffectOverlay();
+    try { pointerTarget.setPointerCapture(event.evt.pointerId); } catch { gesture.pointerTarget = null; }
+    if (gesture.acceptsPoints) queueEffectPoint(point);
+
+    void createRasterEffectSession({
+      documentId: activeDoc.id,
+      layer: target.type === 'base' ? { type: 'base' } : { type: 'ai', id: target.id },
+      settings: { ...blurSettings },
+      previewScale,
+    }).then(session => {
+      if (effectGestureRef.current !== gesture || gesture.cancelled || effectTokenRef.current !== token) {
+        session.cancel();
+        return;
+      }
+      gesture.session = session;
+      if (gesture.released) commitEffectGesture(gesture);
+      else scheduleEffectPreview();
+    }).catch(error => {
+      if (effectGestureRef.current !== gesture || gesture.cancelled) return;
+      setClipboardInfo(error instanceof Error ? error.message : 'Не удалось начать эффект');
+      cancelEffectGesture();
+    });
   };
 
   const clearTextGeometryDraft = () => {
@@ -1791,31 +1972,10 @@ export function CanvasArea() {
       return;
     }
     if (activeTool === 'blur' && activeDoc && e.evt.button === 0) {
-      if (useEditorUiStore.getState().activeOperation?.kind === 'blur') {
-        useEditorUiStore.getState().commitActiveOperation();
-      }
       const position = stageRef.current?.getPointerPosition();
       const point = position && screenToImage(position, { viewport, imageWidth: imgW, imageHeight: imgH });
-      if (!point?.inside || effectBusyRef.current) return;
-      if (blurSettings.gesture === 'area' || blurSettings.applyTo === 'selection') {
-        applyEffectPreview();
-      } else {
-        isEffectPainting.current = true;
-        effectPointsRef.current = [point.x, point.y];
-        const line = liveLineRef.current;
-        if (line) {
-          line.setAttrs({
-            points: [point.x * imgW, point.y * imgH],
-            stroke: 'rgba(94,159,232,.65)',
-            opacity: 1,
-            strokeWidth: blurSettings.brushSize * activeDoc.height * previewScale,
-            shadowBlur: (1 - blurSettings.hardness) * blurSettings.brushSize * activeDoc.height * previewScale * 0.5,
-            shadowColor: '#5e9fe8',
-            visible: true,
-          });
-          line.getLayer()?.batchDraw();
-        }
-      }
+      if (!point?.inside) return;
+      startEffectGesture(e, point);
       return;
     }
     if ((activeTool === 'lasso' || activeTool === 'wand' || activeTool === 'rectSelect' || activeTool === 'polyLasso') && activeDoc) {
@@ -2030,17 +2190,19 @@ export function CanvasArea() {
       }
       return;
     }
-    if (activeTool === 'blur' && isEffectPainting.current && pos) {
-      const point = screenToImage(pos, { viewport, imageWidth: imgW, imageHeight: imgH });
-      if (point?.inside) {
-        const points = effectPointsRef.current;
-        const lastX = points.at(-2) ?? point.x;
-        const lastY = points.at(-1) ?? point.y;
-        if (Math.hypot((point.x - lastX) * imgW, (point.y - lastY) * imgH) * viewport.scale > 1.25) {
-          points.push(point.x, point.y);
-          liveLineRef.current?.points(points.flatMap((value, index) => index % 2 === 0 ? value * imgW : value * imgH));
-          liveLineRef.current?.getLayer()?.batchDraw();
-        }
+    const effectGesture = effectGestureRef.current;
+    if (activeTool === 'blur' && effectGesture && effectGesture.pointerId === e.evt.pointerId) {
+      if (!effectGesture.acceptsPoints) return;
+      const coalescedEvents = typeof e.evt.getCoalescedEvents === 'function' ? e.evt.getCoalescedEvents() : [];
+      const nativeEvents = coalescedEvents.length ? coalescedEvents : [e.evt];
+      const bounds = stage.container().getBoundingClientRect();
+      for (const nativeEvent of nativeEvents) {
+        const nativePoint = {
+          x: (nativeEvent.clientX - bounds.left) * stage.width() / Math.max(1, bounds.width),
+          y: (nativeEvent.clientY - bounds.top) * stage.height() / Math.max(1, bounds.height),
+        };
+        const point = screenToImage(nativePoint, { viewport, imageWidth: imgW, imageHeight: imgH });
+        if (point?.inside) queueEffectPoint(point);
       }
       return;
     }
@@ -2095,13 +2257,9 @@ export function CanvasArea() {
       return;
     }
     isPanning.current = false;
-    if (isEffectPainting.current) {
-      isEffectPainting.current = false;
-      const points = [...effectPointsRef.current];
-      effectPointsRef.current = [];
-      liveLineRef.current?.setAttrs({ points: [], visible: false, shadowBlur: 0 });
-      liveLineRef.current?.getLayer()?.batchDraw();
-      if (points.length >= 2) applyEffectPreview(points);
+    const effectGesture = effectGestureRef.current;
+    if (effectGesture && (!e || effectGesture.pointerId === e.evt.pointerId)) {
+      finishEffectGesture();
       return;
     }
     if (brushFrameRef.current !== null) {
@@ -2216,6 +2374,10 @@ export function CanvasArea() {
       if (textGesture.pointerId === event.evt.pointerId) clearTextGeometryDraft();
       return;
     }
+    if (effectGestureRef.current?.pointerId === event.evt.pointerId) {
+      cancelEffectGesture();
+      return;
+    }
     handleMouseUp(event);
   };
 
@@ -2229,6 +2391,10 @@ export function CanvasArea() {
         finishTextPointerRef.current?.(event);
         return;
       }
+      if (effectGestureRef.current?.pointerId === event.pointerId) {
+        finishEffectGesture();
+        return;
+      }
       if (activePointerIdRef.current === event.pointerId) finishPointerRef.current?.();
     };
     const cancel = (event: PointerEvent) => {
@@ -2236,10 +2402,15 @@ export function CanvasArea() {
         cancelTextPointerRef.current?.();
         return;
       }
+      if (effectGestureRef.current?.pointerId === event.pointerId) {
+        cancelEffectGesture();
+        return;
+      }
       if (activePointerIdRef.current === event.pointerId) finishPointerRef.current?.();
     };
     const finishOnBlur = () => {
       if (textPointerGestureRef.current) cancelTextPointerRef.current?.();
+      if (effectGestureRef.current) cancelEffectGesture();
       if (isPainting.current) finishPointerRef.current?.();
     };
     window.addEventListener('pointerup', finish, true);
@@ -2250,7 +2421,7 @@ export function CanvasArea() {
       window.removeEventListener('pointercancel', cancel, true);
       window.removeEventListener('blur', finishOnBlur);
     };
-  }, []);
+  }, [cancelEffectGesture]);
 
   const handleStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const target = e.target as Konva.Node;
@@ -2752,6 +2923,17 @@ export function CanvasArea() {
             {resolveVisualLayerOrder(activeDoc).map(ref => {
               if (ref.type === 'base') {
                 if (!layerVisibility.base || baseReplaced || activeDoc.baseLayer?.visible === false) return null;
+                if (effectPreviewSlot?.target.type === 'base' && effectPreviewSlot.target.id === ref.id) {
+                  return (
+                    <RasterEffectOverlay
+                      key="base-effect-preview"
+                      ref={effectOverlayRef}
+                      width={imgW}
+                      height={imgH}
+                      preview={effectPreviewSlot}
+                    />
+                  );
+                }
                 return (
                   <BaseLayerNode
                     key="base-node"
@@ -2774,6 +2956,17 @@ export function CanvasArea() {
               if (ref.type === 'ai') {
                 const layer = (activeDoc.aiLayers ?? []).find(item => item.id === ref.id);
                 if (!layer || !layerVisibility.cleanup || !layer.visible) return null;
+                if (effectPreviewSlot?.target.type === 'ai' && effectPreviewSlot.target.id === ref.id) {
+                  return (
+                    <RasterEffectOverlay
+                      key={`${layer.id}-effect-preview`}
+                      ref={effectOverlayRef}
+                      width={imgW}
+                      height={imgH}
+                      preview={effectPreviewSlot}
+                    />
+                  );
+                }
                 return (
                   <RasterLayerNode
                     key={layer.id}
