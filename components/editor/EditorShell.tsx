@@ -181,7 +181,7 @@ export function EditorShell() {
       const target = e.target as HTMLElement;
       const tag = target.tagName.toLowerCase();
       const editable = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
-      const shortcut = resolveEditorShortcut(e);
+      const shortcut = resolveEditorShortcut(e, activeTool);
       // Export remains global even while a form control is focused. Native
       // text undo/redo and editing shortcuts stay owned by the control.
       if (editable && resolveEditableTargetShortcut(e)?.type === 'export') {
@@ -211,6 +211,30 @@ export function EditorShell() {
         else if (shortcut.type === 'redo') redo();
         else if (shortcut.type === 'export') setShowExportModal(true);
         else if (shortcut.type === 'tab') setLeftTab(shortcut.tab);
+        else if (shortcut.type === 'brush-adjust') {
+          const state = useStore.getState();
+          if (activeTool === 'blur') {
+            if (shortcut.property === 'size') {
+              state.updateBlurSettings({
+                brushSize: Math.max(0.003, Math.min(0.35, state.blurSettings.brushSize + shortcut.delta * 0.005)),
+              });
+            } else {
+              state.updateBlurSettings({
+                hardness: Math.max(0, Math.min(1, state.blurSettings.hardness + shortcut.delta * 0.05)),
+              });
+            }
+          } else if (activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser') {
+            if (shortcut.property === 'size') {
+              state.updateCleanupSettings({
+                brushSize: Math.max(0.003, Math.min(0.2, state.cleanupSettings.brushSize + shortcut.delta * 0.005)),
+              });
+            } else {
+              state.updateCleanupSettings({
+                brushHardness: Math.max(0, Math.min(1, state.cleanupSettings.brushHardness + shortcut.delta * 0.05)),
+              });
+            }
+          }
+        }
         else {
           useEditorUiStore.getState().cancelActiveOperation();
           useEditorUiStore.getState().closeToolOptions();

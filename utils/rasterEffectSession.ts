@@ -223,13 +223,18 @@ function sourceRevision(document: ImageDocument, target: RasterTarget) {
 }
 
 function effectParameters(settings: BlurSettings, seed: number, scale: number): RasterEffectParameters {
-  const intensity = clamp(Number.isFinite(settings.intensity) ? settings.intensity : 0.5, 0, 1);
+  const strength = clamp(Number.isFinite(settings.strength) ? settings.strength : 0.5, 0, 1);
+  const radius = settings.mode === 'sharpen' ? settings.sharpenRadius : settings.radius;
   return {
-    radius: Math.max(0, intensity * 36 * scale),
-    strength: 1,
-    cellSize: Math.max(1, Math.round((3 + intensity * 42) * scale)),
-    noiseAmount: intensity * 36 / 255,
-    noiseMonochrome: true,
+    radius: Math.max(0, (Number.isFinite(radius) ? radius : 1) * scale),
+    strength: settings.mode === 'noise'
+      ? 1
+      : settings.mode === 'sharpen'
+        ? clamp(Number.isFinite(settings.sharpenAmount) ? settings.sharpenAmount : 0.5, 0, 1)
+        : strength,
+    cellSize: Math.max(1, (Number.isFinite(settings.cellSize) ? settings.cellSize : 24) * scale),
+    noiseAmount: clamp(Number.isFinite(settings.noiseAmount) ? settings.noiseAmount : 0.18, 0, 1),
+    noiseMonochrome: settings.noiseMonochrome !== false,
     seed,
     coordinateScale: scale,
   };

@@ -110,8 +110,14 @@ const settings: BlurSettings = {
   gesture: 'brush',
   applyTo: 'layer',
   brushSize: 0.1,
-  intensity: 0.5,
   hardness: 0.7,
+  radius: 18,
+  strength: 0.5,
+  cellSize: 24,
+  noiseAmount: 0.18,
+  noiseMonochrome: true,
+  sharpenRadius: 1,
+  sharpenAmount: 0.5,
 };
 
 function drawingLayer(overrides: Partial<AiRasterLayer> = {}): AiRasterLayer {
@@ -223,7 +229,8 @@ describe('raster effect stroke session', () => {
     const mutableSettings = { ...settings };
     const session = await createRasterEffectSession(makeOptions({ settings: mutableSettings }));
     mutableSettings.mode = 'noise';
-    mutableSettings.intensity = 1;
+    mutableSettings.radius = 64;
+    mutableSettings.strength = 1;
     mutableSettings.hardness = 0;
     session.append([0.1, 0.2, 0.3, 0.4]);
 
@@ -238,6 +245,38 @@ describe('raster effect stroke session', () => {
     expect(previewCall[3].seed).toBe(commitCall[3].seed);
     expect(previewCall[3].coordinateScale).toBe(0.5);
     expect(commitCall[3].coordinateScale).toBe(1);
+  });
+
+  it.each([
+    ['blur', { radius: 7, strength: 0.3 }],
+    ['pixelate', { cellSize: 20, strength: 0.3 }],
+    ['noise', { noiseAmount: 0.2, noiseMonochrome: false, strength: 1 }],
+    ['sharpen', { radius: 2, strength: 0.8 }],
+  ] as const)('maps independent %s controls into preview parameters', async (mode, expected) => {
+    const session = await createRasterEffectSession(makeOptions({
+      settings: {
+        ...settings,
+        mode,
+        radius: 14,
+        strength: 0.3,
+        cellSize: 40,
+        noiseAmount: 0.2,
+        noiseMonochrome: false,
+        sharpenRadius: 4,
+        sharpenAmount: 0.8,
+      },
+    }));
+    session.append([0.1, 0.2, 0.3, 0.4]);
+
+    await session.renderPreview();
+
+    expect(rasterMocks.renderRasterEffect).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      mode,
+      expect.objectContaining(expected),
+    );
+    session.cancel();
   });
 
   it('renders only newly dirty preview bounds and reuses the scaled source', async () => {

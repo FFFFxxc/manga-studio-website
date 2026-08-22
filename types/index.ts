@@ -487,12 +487,23 @@ export interface CropSettings {
 }
 
 export interface BlurSettings {
-  mode: 'blur' | 'pixelate' | 'noise';
+  mode: RasterEffectMode;
   gesture: 'brush' | 'area';
   applyTo: 'layer' | 'selection';
   brushSize: number;
-  intensity: number;
   hardness: number;
+  /** Blur sampling radius in document pixels. */
+  radius: number;
+  /** Blur/pixelate mix amount. */
+  strength: number;
+  /** Pixel-grid cell size in document pixels. */
+  cellSize: number;
+  /** Noise amplitude, normalized to 0..1. */
+  noiseAmount: number;
+  noiseMonochrome: boolean;
+  /** Sharpen sampling radius in document pixels. */
+  sharpenRadius: number;
+  sharpenAmount: number;
 }
 
 export type RasterEffectMode = 'blur' | 'pixelate' | 'noise' | 'sharpen';

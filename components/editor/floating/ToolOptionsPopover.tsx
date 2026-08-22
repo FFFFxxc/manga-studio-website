@@ -270,13 +270,28 @@ function BlurOptions() {
   const update = useStore(state => state.updateBlurSettings);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <Field label="Режим"><select value={settings.mode} onChange={event => update({ mode: event.target.value as typeof settings.mode })} style={fieldStyle}><option value="blur">Blur</option><option value="pixelate">Пикселизация</option><option value="noise">Шум</option></select></Field>
+      <Field label="Режим"><select value={settings.mode} onChange={event => update({ mode: event.target.value as typeof settings.mode })} style={fieldStyle}><option value="blur">Размытие</option><option value="pixelate">Пикселизация</option><option value="noise">Шум</option><option value="sharpen">Резкость</option></select></Field>
       <Field label="Способ"><select value={settings.gesture} onChange={event => update({ gesture: event.target.value as typeof settings.gesture })} style={fieldStyle}><option value="brush">Кисть</option><option value="area">Область</option></select></Field>
       <Field label="Применить"><select value={settings.applyTo} onChange={event => update({ applyTo: event.target.value as typeof settings.applyTo })} style={fieldStyle}><option value="layer">К слою</option><option value="selection">К выделению</option></select></Field>
-      <RangeField label="Радиус" value={settings.brushSize} min={0.01} max={0.35} step={0.005} onChange={brushSize => update({ brushSize })} format={value => `${Math.round(value * 100)}%`} />
-      <RangeField label="Интенсивность" value={settings.intensity} min={0.05} max={1} step={0.05} onChange={intensity => update({ intensity })} format={value => `${Math.round(value * 100)}%`} />
+      <RangeField label="Размер кисти" value={settings.brushSize} min={0.003} max={0.35} step={0.005} onChange={brushSize => update({ brushSize })} format={value => `${Math.round(value * 1000) / 10}%`} />
       <RangeField label="Жёсткость края" value={settings.hardness} min={0} max={1} step={0.05} onChange={hardness => update({ hardness })} format={value => `${Math.round(value * 100)}%`} />
-      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Рисуйте по активному растровому слою. Операция попадает в Undo.</span>
+      {settings.mode === 'blur' && <>
+        <RangeField label="Радиус размытия" value={settings.radius} min={0.5} max={64} step={0.5} onChange={radius => update({ radius })} format={value => `${value}px`} />
+        <RangeField label="Сила" value={settings.strength} min={0.05} max={1} step={0.05} onChange={strength => update({ strength })} format={value => `${Math.round(value * 100)}%`} />
+      </>}
+      {settings.mode === 'pixelate' && <>
+        <RangeField label="Размер ячейки" value={settings.cellSize} min={2} max={128} step={1} onChange={cellSize => update({ cellSize })} format={value => `${value}px`} />
+        <RangeField label="Смешивание" value={settings.strength} min={0.05} max={1} step={0.05} onChange={strength => update({ strength })} format={value => `${Math.round(value * 100)}%`} />
+      </>}
+      {settings.mode === 'noise' && <>
+        <RangeField label="Количество шума" value={settings.noiseAmount} min={0.01} max={1} step={0.01} onChange={noiseAmount => update({ noiseAmount })} format={value => `${Math.round(value * 100)}%`} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><input type="checkbox" checked={settings.noiseMonochrome} onChange={event => update({ noiseMonochrome: event.target.checked })} />Монохромный шум</label>
+      </>}
+      {settings.mode === 'sharpen' && <>
+        <RangeField label="Радиус резкости" value={settings.sharpenRadius} min={1} max={8} step={1} onChange={sharpenRadius => update({ sharpenRadius })} format={value => `${value}px`} />
+        <RangeField label="Количество" value={settings.sharpenAmount} min={0.05} max={1} step={0.05} onChange={sharpenAmount => update({ sharpenAmount })} format={value => `${Math.round(value * 100)}%`} />
+      </>}
+      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Рисуйте по активному растровому слою. Отпускание кнопки применяет один шаг Undo. [ / ] — размер, Shift+[ / ] — жёсткость.</span>
     </div>
   );
 }

@@ -32,4 +32,13 @@ describe('editor keyboard ownership', () => {
   it('opens the bubble tab with the displayed numeric shortcut', () => {
     expect(resolveEditorShortcut({ code: 'Digit6', key: '6' })).toEqual({ type: 'tab', tab: 'bubble' });
   });
+
+  it('adjusts size and hardness only for paint and raster-effect tools', () => {
+    expect(resolveEditorShortcut({ code: 'BracketRight', key: ']' }, 'brush'))
+      .toEqual({ type: 'brush-adjust', property: 'size', delta: 1 });
+    expect(resolveEditorShortcut({ code: 'BracketLeft', key: '[', shiftKey: true }, 'blur'))
+      .toEqual({ type: 'brush-adjust', property: 'hardness', delta: -1 });
+    expect(resolveEditorShortcut({ code: 'BracketRight', key: ']' }, 'text')).toBeNull();
+    expect(resolveEditableTargetShortcut({ code: 'BracketRight', key: ']' })).toBeNull();
+  });
 });

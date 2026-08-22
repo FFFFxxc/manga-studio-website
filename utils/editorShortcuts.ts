@@ -14,15 +14,26 @@ export type EditorShortcut =
   | { type: 'redo' }
   | { type: 'export' }
   | { type: 'tool'; tool: ActiveTool; tab?: LeftTab }
-  | { type: 'tab'; tab: LeftTab };
+  | { type: 'tab'; tab: LeftTab }
+  | { type: 'brush-adjust'; property: 'size' | 'hardness'; delta: -1 | 1 };
 
-export function resolveEditorShortcut(event: KeyboardLike): EditorShortcut | null {
+export function resolveEditorShortcut(event: KeyboardLike, activeTool?: ActiveTool): EditorShortcut | null {
   const mod = Boolean(event.ctrlKey || event.metaKey);
   if (mod) {
     if (event.code === 'KeyZ') return { type: event.shiftKey || event.altKey ? 'redo' : 'undo' };
     if (event.code === 'KeyY') return { type: 'redo' };
     if (event.code === 'KeyE' || event.code === 'KeyS') return { type: 'export' };
     return null;
+  }
+
+  const paintTools: ActiveTool[] = ['brush', 'maskBrush', 'eraser', 'blur'];
+  if (activeTool && paintTools.includes(activeTool)
+    && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
+    return {
+      type: 'brush-adjust',
+      property: event.shiftKey ? 'hardness' : 'size',
+      delta: event.code === 'BracketRight' ? 1 : -1,
+    };
   }
 
   const tools: Partial<Record<string, { tool: ActiveTool; tab?: LeftTab }>> = {

@@ -107,8 +107,14 @@ const defaultBlurSettings: BlurSettings = {
   gesture: 'brush',
   applyTo: 'layer',
   brushSize: 0.08,
-  intensity: 0.5,
   hardness: 0.75,
+  radius: 18,
+  strength: 0.5,
+  cellSize: 24,
+  noiseAmount: 0.18,
+  noiseMonochrome: true,
+  sharpenRadius: 1,
+  sharpenAmount: 0.5,
 };
 
 const defaultTranslationMaskSettings: TranslationMaskSettings = {

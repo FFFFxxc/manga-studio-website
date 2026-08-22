@@ -177,8 +177,9 @@ function renderNoise(source: HTMLCanvasElement, bounds: RasterEffectBounds, para
   return output;
 }
 
-function renderSharpen(source: HTMLCanvasElement, bounds: RasterEffectBounds) {
-  const expandedBounds = expandEffectBounds(bounds, 1, source.width, source.height);
+function renderSharpen(source: HTMLCanvasElement, bounds: RasterEffectBounds, radius: number) {
+  const sampleRadius = Math.max(1, Math.round(finiteOr(radius, 1)));
+  const expandedBounds = expandEffectBounds(bounds, sampleRadius, source.width, source.height);
   const expandedSource = createCanvas(expandedBounds.width, expandedBounds.height);
   context2d(expandedSource).drawImage(
     source,
@@ -205,10 +206,10 @@ function renderSharpen(source: HTMLCanvasElement, bounds: RasterEffectBounds) {
       const index = (y * expandedSource.width + x) * 4;
       for (let channel = 0; channel < 3; channel += 1) {
         result.data[index + channel] = sample(x, y, channel) * 5
-          - sample(x - 1, y, channel)
-          - sample(x + 1, y, channel)
-          - sample(x, y - 1, channel)
-          - sample(x, y + 1, channel);
+          - sample(x - sampleRadius, y, channel)
+          - sample(x + sampleRadius, y, channel)
+          - sample(x, y - sampleRadius, channel)
+          - sample(x, y + sampleRadius, channel);
       }
       result.data[index + 3] = pixels.data[index + 3];
     }
@@ -299,7 +300,7 @@ export function renderRasterEffect(
   if (mode === 'blur') effected = renderBlur(source, sourceBounds, parameters.radius);
   else if (mode === 'pixelate') effected = renderPixelate(source, sourceBounds, sourceBounds, parameters.cellSize);
   else if (mode === 'noise') effected = renderNoise(sourcePatch, sourceBounds, parameters);
-  else effected = renderSharpen(source, sourceBounds);
+  else effected = renderSharpen(source, sourceBounds, parameters.radius);
 
   const output = createCanvas(sourcePatch.width, sourcePatch.height);
   if (mode === 'pixelate') context2d(output).imageSmoothingEnabled = false;

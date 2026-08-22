@@ -11,6 +11,7 @@ const toolTitles: Record<string, string> = {
   eraser: 'Ластик', maskBrush: 'Маска', brush: 'Кисть', select: 'Выделение объектов',
   pan: 'Рука', text: 'Текст', watermark: 'Вотерка', wand: 'Волшебная палочка',
   lasso: 'Лассо', polyLasso: 'Прямолинейное лассо', rectSelect: 'Прямоугольное выделение', crop: 'Кадрирование',
+  blur: 'Растровый эффект',
 };
 
 const selectionModes: Array<{ mode: SelectionMode; label: string; hint: string }> = [
@@ -21,9 +22,10 @@ const selectionModes: Array<{ mode: SelectionMode; label: string; hint: string }
 
 export function ToolOptionsBar() {
   const state = useStore();
-  const { activeTool, cleanupSettings, updateCleanupSettings, selectedObject, documents, activeDocIndex } = state;
+  const { activeTool, cleanupSettings, updateCleanupSettings, blurSettings, updateBlurSettings, selectedObject, documents, activeDocIndex } = state;
   const doc = activeDocIndex >= 0 ? documents[activeDocIndex] : null;
   const isMarking = activeTool === 'brush' || activeTool === 'maskBrush' || activeTool === 'eraser';
+  const isEffect = activeTool === 'blur';
   const isSelecting = activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'rectSelect' || activeTool === 'wand';
   const [running, setRunning] = useState<string | null>(null);
   const [fillColor, setFillColor] = useState('#ffffff');
@@ -83,6 +85,48 @@ export function ToolOptionsBar() {
           <span>%</span>
         </label>
         {activeTool === 'brush' && <input aria-label="Цвет кисти" title="Цвет кисти" type="color" value={cleanupSettings.brushColor} onChange={event => updateCleanupSettings({ brushColor: event.target.value })} onMouseDown={event => event.stopPropagation()} style={{ width: 30, height: 26, cursor: 'pointer', pointerEvents: 'auto' }} />}
+      </>}
+      {isEffect && <>
+        <select aria-label="Растровый эффект" value={blurSettings.mode} onChange={event => updateBlurSettings({ mode: event.target.value as typeof blurSettings.mode })}>
+          <option value="blur">Размытие</option>
+          <option value="pixelate">Пикселизация</option>
+          <option value="noise">Шум</option>
+          <option value="sharpen">Резкость</option>
+        </select>
+        <select aria-label="Способ эффекта" value={blurSettings.gesture} onChange={event => updateBlurSettings({ gesture: event.target.value as typeof blurSettings.gesture })}>
+          <option value="brush">Кисть</option>
+          <option value="area">Вся область</option>
+        </select>
+        <select aria-label="Цель эффекта" value={blurSettings.applyTo} onChange={event => updateBlurSettings({ applyTo: event.target.value as typeof blurSettings.applyTo })}>
+          <option value="layer">Активный слой</option>
+          <option value="selection">Выделение</option>
+        </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="[ / ] меняют размер кисти">
+          Кисть
+          <EditorSlider label="Размер кисти эффекта" min={3} max={350} step={5} value={Math.round(blurSettings.brushSize * 1000)} onChange={value => updateBlurSettings({ brushSize: value / 1000 })} style={{ width: 88 }} />
+          <span>{Math.round(blurSettings.brushSize * 1000)}</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="Shift+[ / ] меняют жёсткость">
+          Край
+          <EditorSlider label="Жёсткость кисти эффекта" min={0} max={100} step={5} value={Math.round(blurSettings.hardness * 100)} onChange={value => updateBlurSettings({ hardness: value / 100 })} style={{ width: 76 }} />
+          <span>{Math.round(blurSettings.hardness * 100)}%</span>
+        </label>
+        {blurSettings.mode === 'blur' && <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Радиус <input className="tool-number" aria-label="Радиус размытия" type="number" min="0.5" max="64" step="0.5" value={blurSettings.radius} onChange={event => updateBlurSettings({ radius: Math.max(0.5, Math.min(64, Number(event.target.value))) })} /> px</label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Сила <EditorSlider label="Сила размытия" min={5} max={100} step={5} value={Math.round(blurSettings.strength * 100)} onChange={value => updateBlurSettings({ strength: value / 100 })} style={{ width: 76 }} /> <span>{Math.round(blurSettings.strength * 100)}%</span></label>
+        </>}
+        {blurSettings.mode === 'pixelate' && <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Ячейка <input className="tool-number" aria-label="Размер ячейки пикселизации" type="number" min="2" max="128" step="1" value={blurSettings.cellSize} onChange={event => updateBlurSettings({ cellSize: Math.max(2, Math.min(128, Number(event.target.value))) })} /> px</label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Mix <EditorSlider label="Смешивание пикселизации" min={5} max={100} step={5} value={Math.round(blurSettings.strength * 100)} onChange={value => updateBlurSettings({ strength: value / 100 })} style={{ width: 76 }} /> <span>{Math.round(blurSettings.strength * 100)}%</span></label>
+        </>}
+        {blurSettings.mode === 'noise' && <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Шум <EditorSlider label="Количество шума" min={1} max={100} step={1} value={Math.round(blurSettings.noiseAmount * 100)} onChange={value => updateBlurSettings({ noiseAmount: value / 100 })} style={{ width: 76 }} /> <span>{Math.round(blurSettings.noiseAmount * 100)}%</span></label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={blurSettings.noiseMonochrome} onChange={event => updateBlurSettings({ noiseMonochrome: event.target.checked })} />Моно</label>
+        </>}
+        {blurSettings.mode === 'sharpen' && <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Радиус <input className="tool-number" aria-label="Радиус резкости" type="number" min="1" max="8" step="1" value={blurSettings.sharpenRadius} onChange={event => updateBlurSettings({ sharpenRadius: Math.max(1, Math.min(8, Number(event.target.value))) })} /> px</label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Сила <EditorSlider label="Количество резкости" min={5} max={100} step={5} value={Math.round(blurSettings.sharpenAmount * 100)} onChange={value => updateBlurSettings({ sharpenAmount: value / 100 })} style={{ width: 76 }} /> <span>{Math.round(blurSettings.sharpenAmount * 100)}%</span></label>
+        </>}
       </>}
       {activeTool === 'pan' && <span>Перетаскивайте холст. Удерживайте Space для временного режима.</span>}
 
