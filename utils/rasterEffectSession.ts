@@ -134,12 +134,12 @@ function targetKey(target: RasterTarget) {
   return `${target.type}:${target.id}`;
 }
 
-function resolveTarget(document: ImageDocument, target: RasterTarget) {
-  const selected = selectedRasterTarget(document);
-  if (!selected) throw new Error('Выберите растровый слой.');
+function resolveTarget(document: ImageDocument, target: RasterTarget, requireSelection = true) {
+  const selected = requireSelection ? selectedRasterTarget(document) : null;
+  if (requireSelection && !selected) throw new Error('Выберите растровый слой.');
   if (target.type === 'base') {
     if (target.id !== document.baseLayer.id) throw new Error('Слой не найден.');
-    if (targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
+    if (selected && targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
     if (!document.baseLayer.visible) throw new Error('Слой скрыт. Сделайте слой видимым.');
     if (document.baseLayer.locked) throw new Error('Слой заблокирован. Снимите блокировку.');
     assertIdentityPlacement(document.baseLayer);
@@ -147,7 +147,7 @@ function resolveTarget(document: ImageDocument, target: RasterTarget) {
   }
   const layer = document.aiLayers.find(item => item.id === target.id);
   if (!layer) throw new Error('Слой не найден.');
-  if (targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
+  if (selected && targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
   if (!layer.visible) throw new Error('Слой скрыт. Сделайте слой видимым.');
   if (layer.locked) throw new Error('Слой заблокирован. Снимите блокировку.');
   assertIdentityPlacement(layer);
@@ -349,7 +349,11 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   if (!latestDocument || latestDocument.id !== activeDocument.id) {
     throw new Error('Активная страница изменилась. Эффект отменён.');
   }
-  resolveTarget(latestDocument, target);
+  // The gesture already captured and validated its target at pointerdown.
+  // Selection may legitimately be cleared after pointerup (for example by
+  // Escape), so subsequent identity/revision checks must validate the captured
+  // target itself rather than the current UI selection.
+  resolveTarget(latestDocument, target, false);
   if (sourceRevision(latestDocument, target) !== revision) {
     throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
   }
@@ -446,7 +450,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
         cancelled = true;
         throw new Error('Активная страница изменилась. Эффект отменён.');
       }
-      resolveTarget(currentDocument, target);
+      resolveTarget(currentDocument, target, false);
       if (sourceRevision(currentDocument, target) !== revision) {
         cancelled = true;
         throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
@@ -469,7 +473,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
           cancelled = true;
           throw new Error('Активная страница изменилась. Эффект отменён.');
         }
-        resolveTarget(commitDocument, target);
+        resolveTarget(commitDocument, target, false);
         if (sourceRevision(commitDocument, target) !== revision) {
           cancelled = true;
           throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');

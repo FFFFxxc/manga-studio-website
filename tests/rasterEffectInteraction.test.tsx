@@ -274,6 +274,27 @@ describe('CanvasArea raster-effect interaction', () => {
     expect(useStore.getState().documents[0].past).toHaveLength(1);
   });
 
+  it('keeps a released pending stamp when Escape clears the current selection', async () => {
+    let resolveSession: ((value: typeof session) => void) | null = null;
+    effectMocks.createRasterEffectSession.mockReturnValue(new Promise(resolve => { resolveSession = resolve; }));
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('effect-canvas-stage');
+
+    fireEvent.pointerDown(stage, { pointerId: 12, button: 0, clientX: 320, clientY: 320 });
+    fireEvent.pointerUp(window, { pointerId: 12 });
+    fireEvent(window, new Event('manga-editor-cancel-transient'));
+    act(() => useStore.getState().selectLayer(null));
+
+    await act(async () => {
+      resolveSession?.(session);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(session.commit).toHaveBeenCalledTimes(1));
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(useStore.getState().documents[0].past).toHaveLength(1);
+  });
+
   it('cancels pending session construction when CanvasArea unmounts', async () => {
     let resolveSession: ((value: typeof session) => void) | null = null;
     effectMocks.createRasterEffectSession.mockReturnValue(new Promise(resolve => { resolveSession = resolve; }));

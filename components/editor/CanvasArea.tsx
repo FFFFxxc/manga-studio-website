@@ -1780,10 +1780,13 @@ export function CanvasArea() {
       committing: false,
     };
     effectGestureRef.current = gesture;
-    setActiveEffectGestureSettings(settings);
     pendingEffectPointsRef.current = [];
     lastEffectPointRef.current = null;
     clearEffectOverlay();
+    // Publish the immutable cursor settings after clearing the previous
+    // overlay. Otherwise clearEffectOverlay resets the just-captured values
+    // and bracket shortcuts can visually resize a stroke already in progress.
+    setActiveEffectGestureSettings(settings);
     try { pointerTarget.setPointerCapture(event.evt.pointerId); } catch { gesture.pointerTarget = null; }
     if (gesture.acceptsPoints) queueEffectPoint(point);
 
