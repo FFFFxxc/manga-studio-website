@@ -484,10 +484,12 @@ describe('text creation drafts', () => {
     await user.dblClick(screen.getByTestId('konva-text'));
     const editor = screen.getByRole('textbox');
     fireEvent.change(editor, { target: { value: 'Stale update' } });
-    act(() => useStore.getState().deleteText('text-existing'));
+    act(() => {
+      useStore.getState().deleteText('text-existing');
+      fireEvent.blur(editor);
+    });
 
     expect(screen.queryByRole('textbox')).toBeNull();
-    fireEvent.blur(editor);
     expect(useStore.getState().documents[0].texts).toHaveLength(0);
     expect(useStore.getState().documents[0].past).toHaveLength(1);
     expect(useStore.getState().selectedObject).toBeNull();

@@ -1548,6 +1548,10 @@ export function CanvasArea() {
       cancelTextDraft();
       return;
     }
+    if (pendingTextDraft.original && !currentDocument.texts.some(text => text.id === pendingTextDraft.id)) {
+      cancelTextDraft();
+      return;
+    }
     if (value.trim().length === 0) {
       cancelTextDraft();
       return;
