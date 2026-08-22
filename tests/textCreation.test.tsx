@@ -140,6 +140,15 @@ class TestResizeObserver {
   disconnect() {}
 }
 
+let nextAnimationFrameId = 1;
+let queuedAnimationFrames = new Map<number, FrameRequestCallback>();
+
+function flushAnimationFrames() {
+  const frames = [...queuedAnimationFrames.values()];
+  queuedAnimationFrames.clear();
+  frames.forEach(callback => callback(0));
+}
+
 function pointText(overrides: Partial<TextObject> = {}): TextObject {
   return {
     id: 'text-existing',
@@ -211,11 +220,16 @@ describe('text creation drafts', () => {
       fillStyle: '',
       fillRect: vi.fn(),
     } as unknown as CanvasRenderingContext2D);
+    nextAnimationFrameId = 1;
+    queuedAnimationFrames = new Map();
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
-      callback(0);
-      return 1;
+      const id = nextAnimationFrameId++;
+      queuedAnimationFrames.set(id, callback);
+      return id;
     });
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+      queuedAnimationFrames.delete(id);
+    });
     seedEditor();
   });
 
@@ -246,6 +260,38 @@ describe('text creation drafts', () => {
     expect(screen.getByRole('textbox').getAttribute('data-text-mode')).toBe('paragraph');
     expect(useStore.getState().documents[0].texts).toHaveLength(0);
     expect(useStore.getState().documents[0].past).toHaveLength(0);
+  });
+
+  // Mutation caught: scheduling one frame per move or capturing the first end
+  // point makes fast drags render stale geometry instead of the latest point.
+  it('coalesces draft frames and renders the latest queued geometry', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 3, clientX: 200, clientY: 160 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 3, clientX: 320, clientY: 240 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 3, clientX: 500, clientY: 320 });
+
+    expect(window.requestAnimationFrame).toHaveBeenCalledTimes(1);
+    act(flushAnimationFrames);
+
+    expect(Number.parseFloat(screen.getByTestId('text-draft-overlay').style.width)).toBeCloseTo(300, 5);
+  });
+
+  // Mutation caught: forgetting to cancel the queued frame lets a stale draft
+  // overlay reappear after pointer cancellation.
+  it('cancels an unflushed draft frame with the gesture', () => {
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('canvas-stage');
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 4, clientX: 200, clientY: 160 });
+    fireEvent.pointerMove(stage, { button: 0, pointerId: 4, clientX: 500, clientY: 320 });
+    expect(queuedAnimationFrames).toHaveLength(1);
+
+    fireEvent.pointerCancel(stage, { pointerId: 4, clientX: 500, clientY: 320 });
+    expect(window.cancelAnimationFrame).toHaveBeenCalledTimes(1);
+    expect(queuedAnimationFrames).toHaveLength(0);
+    act(flushAnimationFrames);
+
+    expect(screen.queryByTestId('text-draft-overlay')).toBeNull();
   });
 
   // Mutation caught: leaving overflow state behind after closing an editor
@@ -376,16 +422,16 @@ describe('text creation drafts', () => {
 
   // Mutation caught: adding pushHistory before addText makes two snapshots;
   // forgetting the tool/selection updates leaves creation half-finished.
-  it('commits meaningful content once, selects it and returns to Select', async () => {
+  it('commits one paragraph once, selects it and returns to Select', async () => {
     const user = userEvent.setup();
     render(<CanvasArea />);
-    clickCanvas(screen.getByTestId('canvas-stage'), { x: 240, y: 180 });
+    dragCanvas(screen.getByTestId('canvas-stage'), { x: 200, y: 160 }, { x: 500, y: 320 });
 
-    await user.type(screen.getByRole('textbox'), 'Новый текст{Control>}{Enter}{/Control}');
+    await user.type(screen.getByRole('textbox'), 'Длинная строка для переноса{Control>}{Enter}{/Control}');
 
     const state = useStore.getState();
     expect(state.documents[0].texts).toHaveLength(1);
-    expect(state.documents[0].texts[0]).toMatchObject({ text: 'Новый текст', textMode: 'point' });
+    expect(state.documents[0].texts[0]).toMatchObject({ text: 'Длинная строка для переноса', textMode: 'paragraph' });
     expect(state.documents[0].past).toHaveLength(1);
     expect(state.selectedObject).toEqual({ type: 'text', id: state.documents[0].texts[0].id });
     expect(state.activeTool).toBe('select');
@@ -424,6 +470,27 @@ describe('text creation drafts', () => {
     await user.type(secondEditor, 'Updated{Control>}{Enter}{/Control}');
     expect(useStore.getState().documents[0].texts[0].text).toBe('Updated');
     expect(useStore.getState().documents[0].past).toHaveLength(1);
+    act(() => useStore.getState().undo());
+    expect(useStore.getState().documents[0].texts[0].text).toBe('Original');
+  });
+
+  // Mutation caught: keeping an original draft after another action deletes
+  // the object lets its stale blur/commit add a second no-op history snapshot.
+  it('cancels an existing editor when its text is deleted externally', async () => {
+    const user = userEvent.setup();
+    seedEditor([pointText()]);
+    render(<CanvasArea />);
+
+    await user.dblClick(screen.getByTestId('konva-text'));
+    const editor = screen.getByRole('textbox');
+    fireEvent.change(editor, { target: { value: 'Stale update' } });
+    act(() => useStore.getState().deleteText('text-existing'));
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    fireEvent.blur(editor);
+    expect(useStore.getState().documents[0].texts).toHaveLength(0);
+    expect(useStore.getState().documents[0].past).toHaveLength(1);
+    expect(useStore.getState().selectedObject).toBeNull();
   });
 
   it('does not create a draft when the Text tool clicks existing text', () => {

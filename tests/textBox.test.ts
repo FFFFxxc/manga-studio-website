@@ -28,4 +28,21 @@ describe('paragraph text geometry', () => {
       5,
     )).toMatchObject({ mode: 'paragraph', width: 0.024, height: 0.03 });
   });
+
+  // Mutation caught: clamping only the drag origin lets the 24px minimum box
+  // extend past the document when the gesture begins at its lower-right edge.
+  it('keeps a minimum paragraph draft inside the document near its edges', () => {
+    expect(createTextDraftRect(
+      { x: 995, y: 795 },
+      { x: 1000, y: 800 },
+      { width: 1000, height: 800 },
+      5,
+    )).toMatchObject({
+      mode: 'paragraph',
+      x: 0.976,
+      y: 0.97,
+      width: 0.024,
+      height: 0.03,
+    });
+  });
 });

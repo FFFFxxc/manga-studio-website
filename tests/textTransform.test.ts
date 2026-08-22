@@ -235,6 +235,15 @@ describe('paragraph text transforms', () => {
     seedText(makeText());
     render(React.createElement(CanvasArea));
     const node = textNode();
+    const storedGeometryBeforeTransform = {
+      x: useStore.getState().documents[0].texts[0].x,
+      y: useStore.getState().documents[0].texts[0].y,
+      width: useStore.getState().documents[0].texts[0].width,
+      height: useStore.getState().documents[0].texts[0].height,
+      scaleX: useStore.getState().documents[0].texts[0].scaleX,
+      scaleY: useStore.getState().documents[0].texts[0].scaleY,
+      rotation: useStore.getState().documents[0].texts[0].rotation,
+    };
 
     node.scaleX(1.4);
     node.scaleY(0.75);
@@ -248,6 +257,7 @@ describe('paragraph text transforms', () => {
     expect(node.scaleX()).toBe(1);
     expect(node.scaleY()).toBe(1);
     expect(useStore.getState().documents[0].past).toHaveLength(1);
+    expect(useStore.getState().documents[0].texts[0]).toMatchObject(storedGeometryBeforeTransform);
 
     act(() => textProps().onTransformEnd({ evt: { ctrlKey: false, metaKey: false } }));
     expect(useStore.getState().documents[0].texts[0]).toMatchObject({

@@ -1665,6 +1665,11 @@ export function CanvasArea() {
     }
   }, [activeDoc?.id, pendingTextDraft?.documentId]);
 
+  useEffect(() => {
+    if (!pendingTextDraft?.original || activeDoc?.id !== pendingTextDraft.documentId) return;
+    if (!activeDoc.texts.some(text => text.id === pendingTextDraft.id)) clearTextDraftState();
+  }, [activeDoc?.id, activeDoc?.texts, pendingTextDraft]);
+
   const handleMouseDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
     if (textPointerGestureRef.current) return;
     if (activeTool === 'pan' || e.evt.button === 1) {

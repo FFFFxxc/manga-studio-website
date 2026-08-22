@@ -4,6 +4,7 @@ import { sanitizeText } from '@/utils/coordinates';
 import { createTextNodeConfig, renderTextObjectToContext } from '@/utils/textRenderer';
 
 const konvaText = vi.hoisted(() => ({
+  config: null as Record<string, unknown> | null,
   destroy: vi.fn(),
   toCanvas: vi.fn(() => 'text-canvas' as unknown as HTMLCanvasElement),
   getClientRect: vi.fn(() => ({ x: 20.4, y: 30.2, width: 240.2, height: 150.6 })),
@@ -12,6 +13,9 @@ const konvaText = vi.hoisted(() => ({
 vi.mock('konva', () => ({
   default: {
     Text: class {
+      constructor(config: Record<string, unknown>) {
+        konvaText.config = config;
+      }
       destroy = konvaText.destroy;
       getClientRect = konvaText.getClientRect;
       toCanvas = konvaText.toCanvas;
@@ -63,6 +67,29 @@ describe('shared text renderer', () => {
       wrap: 'word',
       verticalAlign: 'top',
       align: 'center',
+    });
+  });
+
+  it('uses the preview wrapping config unchanged for export', () => {
+    const paragraph = { ...text, textMode: 'paragraph' as const, height: 0.15 };
+    const previewConfig = createTextNodeConfig(paragraph, 2000, 1000, 1);
+    const context = {
+      save: vi.fn(), beginPath: vi.fn(), translate: vi.fn(), rotate: vi.fn(), scale: vi.fn(),
+      rect: vi.fn(), clip: vi.fn(), drawImage: vi.fn(), restore: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+
+    renderTextObjectToContext(context, paragraph, 2000, 1000);
+
+    expect(konvaText.config).toMatchObject({
+      text: previewConfig.text,
+      width: previewConfig.width,
+      height: previewConfig.height,
+      fontFamily: previewConfig.fontFamily,
+      fontSize: previewConfig.fontSize,
+      lineHeight: previewConfig.lineHeight,
+      align: previewConfig.align,
+      wrap: 'word',
+      verticalAlign: 'top',
     });
   });
 
@@ -156,5 +183,18 @@ describe('shared text renderer', () => {
     expect(sanitizeText({ ...text, height: 0.2 })).toMatchObject({ width: 0.2, height: 0.2 });
     expect(sanitizeText({ ...text, height: -0.2 })).toMatchObject({ width: 0.2 });
     expect(sanitizeText({ ...text, height: -0.2 })).not.toHaveProperty('height');
+  });
+
+  it('rejects non-finite required geometry and drops invalid optional paragraph metadata', () => {
+    expect(sanitizeText({ ...text, x: Number.NaN })).toBeNull();
+    expect(sanitizeText({ ...text, width: Number.POSITIVE_INFINITY })).toBeNull();
+    expect(sanitizeText({ ...text, fontSize: Number.NEGATIVE_INFINITY })).toBeNull();
+    expect(sanitizeText({ ...text, textMode: 'invalid' as never, height: Number.NaN })).not.toHaveProperty('textMode');
+    expect(sanitizeText({ ...text, textMode: 'invalid' as never, height: Number.POSITIVE_INFINITY })).not.toHaveProperty('height');
+  });
+
+  it('renders a legacy text object without paragraph metadata', () => {
+    const context = { drawImage: vi.fn() } as unknown as CanvasRenderingContext2D;
+    expect(() => renderTextObjectToContext(context, text, 2000, 1000)).not.toThrow();
   });
 });

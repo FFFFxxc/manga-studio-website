@@ -65,12 +65,14 @@ export function createTextDraftRect(
     };
   }
 
-  const xPx = clamp(Math.min(start.x, end.x), 0, documentWidth);
-  const yPx = clamp(Math.min(start.y, end.y), 0, documentHeight);
-  const maxWidthPx = Math.max(MIN_PARAGRAPH_BOX_PX, documentWidth - xPx);
-  const maxHeightPx = Math.max(MIN_PARAGRAPH_BOX_PX, documentHeight - yPx);
-  const widthPx = clamp(Math.max(dragWidthPx, MIN_PARAGRAPH_BOX_PX), MIN_PARAGRAPH_BOX_PX, maxWidthPx);
-  const heightPx = clamp(Math.max(dragHeightPx, MIN_PARAGRAPH_BOX_PX), MIN_PARAGRAPH_BOX_PX, maxHeightPx);
+  const minimumWidthPx = Math.min(MIN_PARAGRAPH_BOX_PX, documentWidth);
+  const minimumHeightPx = Math.min(MIN_PARAGRAPH_BOX_PX, documentHeight);
+  const xPx = clamp(Math.min(start.x, end.x), 0, documentWidth - minimumWidthPx);
+  const yPx = clamp(Math.min(start.y, end.y), 0, documentHeight - minimumHeightPx);
+  const maxWidthPx = documentWidth - xPx;
+  const maxHeightPx = documentHeight - yPx;
+  const widthPx = clamp(Math.max(dragWidthPx, minimumWidthPx), minimumWidthPx, maxWidthPx);
+  const heightPx = clamp(Math.max(dragHeightPx, minimumHeightPx), minimumHeightPx, maxHeightPx);
 
   return {
     mode: 'paragraph',

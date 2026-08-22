@@ -733,7 +733,7 @@ export function TextPanel() {
         <textarea
           value={textSettings.draftText}
           onChange={e => updateTextSettings({ draftText: e.target.value })}
-          placeholder="Введите текст, затем кликните на холст"
+          placeholder="Текст можно ввести после создания рамки"
           rows={3}
           onWheel={e => e.stopPropagation()}
           style={{
@@ -750,6 +750,9 @@ export function TextPanel() {
             boxSizing: 'border-box',
           }}
         />
+        <div style={{ marginTop: 5, color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.45 }}>
+          Потяните рамку · Enter — новая строка · Ctrl/⌘+Enter — готово · Esc — отмена
+        </div>
       </div>
 
       <button

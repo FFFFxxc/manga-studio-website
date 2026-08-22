@@ -159,7 +159,12 @@ export function ToolOptionsBar() {
         <button disabled={!selectionActive} onClick={state.clearActiveMask}>Сбросить</button>
       </>}
 
-      {activeTool === 'text' && <button onClick={() => state.setLeftTab('text')}>Открыть настройки</button>}
+      {activeTool === 'text' && <>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+          Потяните рамку · Enter — новая строка · Ctrl/⌘+Enter — готово · Esc — отмена
+        </span>
+        <button onClick={() => state.setLeftTab('text')}>Открыть настройки</button>
+      </>}
       {activeTool === 'select' && (selectedObject ? <>
         <span>{selectedObject.type === 'text' ? 'Текст' : selectedObject.type === 'shape' ? 'Фигура' : 'Вотерка'}</span>
         <button onClick={state.duplicateSelectedObject}><Copy size={14} /> Дублировать</button>
