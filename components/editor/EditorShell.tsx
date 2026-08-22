@@ -61,6 +61,11 @@ export function EditorShell() {
     activeTool: state.activeTool,
   })));
   const prevToolRef = useRef<ActiveTool | null>(null);
+  const lastRetouchToolRef = useRef<'smudge' | 'sharpen'>('smudge');
+
+  useEffect(() => {
+    if (activeTool === 'smudge' || activeTool === 'sharpen') lastRetouchToolRef.current = activeTool;
+  }, [activeTool]);
 
   // Register hasChanges for beforeunload
   useEffect(() => {
@@ -181,7 +186,7 @@ export function EditorShell() {
       const target = e.target as HTMLElement;
       const tag = target.tagName.toLowerCase();
       const editable = tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
-      const shortcut = resolveEditorShortcut(e, activeTool);
+      const shortcut = resolveEditorShortcut(e, activeTool, lastRetouchToolRef.current);
       // Export remains global even while a form control is focused. Native
       // text undo/redo and editing shortcuts stay owned by the control.
       if (editable && resolveEditableTargetShortcut(e)?.type === 'export') {

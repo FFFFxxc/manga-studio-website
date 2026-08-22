@@ -17,7 +17,11 @@ export type EditorShortcut =
   | { type: 'tab'; tab: LeftTab }
   | { type: 'brush-adjust'; property: 'size' | 'hardness'; delta: -1 | 1 };
 
-export function resolveEditorShortcut(event: KeyboardLike, activeTool?: ActiveTool): EditorShortcut | null {
+export function resolveEditorShortcut(
+  event: KeyboardLike,
+  activeTool?: ActiveTool,
+  lastRetouchTool: 'smudge' | 'sharpen' = 'smudge',
+): EditorShortcut | null {
   const mod = Boolean(event.ctrlKey || event.metaKey);
   if (mod) {
     if (event.code === 'KeyZ') return { type: event.shiftKey || event.altKey ? 'redo' : 'undo' };
@@ -48,7 +52,9 @@ export function resolveEditorShortcut(event: KeyboardLike, activeTool?: ActiveTo
     KeyK: { tool: 'maskBrush', tab: 'cleanup' },
     KeyT: { tool: 'text', tab: 'text' },
     KeyC: { tool: 'crop', tab: 'transform' },
-    KeyR: { tool: 'blur' },
+    KeyI: { tool: 'eyedropper' },
+    KeyS: { tool: 'cloneStamp' },
+    KeyR: { tool: lastRetouchTool },
   };
   const tool = tools[event.code];
   if (tool) return { type: 'tool', ...tool };

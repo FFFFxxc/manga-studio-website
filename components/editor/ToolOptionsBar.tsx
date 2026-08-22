@@ -12,6 +12,7 @@ const toolTitles: Record<string, string> = {
   pan: 'Рука', text: 'Текст', watermark: 'Вотерка', wand: 'Волшебная палочка',
   lasso: 'Лассо', polyLasso: 'Прямолинейное лассо', rectSelect: 'Прямоугольное выделение', crop: 'Кадрирование',
   blur: 'Растровый эффект',
+  eyedropper: 'Пипетка', cloneStamp: 'Штамп', smudge: 'Палец', sharpen: 'Резкость',
 };
 
 const selectionModes: Array<{ mode: SelectionMode; label: string; hint: string }> = [
@@ -128,6 +129,10 @@ export function ToolOptionsBar() {
           <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Сила <EditorSlider label="Количество резкости" min={5} max={100} step={5} value={Math.round(blurSettings.sharpenAmount * 100)} onChange={value => updateBlurSettings({ sharpenAmount: value / 100 })} style={{ width: 76 }} /> <span>{Math.round(blurSettings.sharpenAmount * 100)}%</span></label>
         </>}
       </>}
+      {activeTool === 'eyedropper' && <span>Кликните по изображению, чтобы взять итоговый цвет · I</span>}
+      {activeTool === 'cloneStamp' && <span>Alt/Option + клик — выбрать источник · S</span>}
+      {activeTool === 'smudge' && <span>Переносит цвет по направлению движения · R</span>}
+      {activeTool === 'sharpen' && <span>Повышает локальную резкость кистью · R</span>}
       {activeTool === 'pan' && <span>Перетаскивайте холст. Удерживайте Space для временного режима.</span>}
 
       {isSelecting && <>

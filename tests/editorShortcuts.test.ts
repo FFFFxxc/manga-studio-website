@@ -22,10 +22,12 @@ describe('editor keyboard ownership', () => {
     expect(resolveEditableTargetShortcut({ code: 'KeyZ', key: 'z', ctrlKey: true })).toBeNull();
   });
 
-  it('keeps one hotkey per selection tool and uses R for blur', () => {
+  it('keeps one hotkey per selection tool and routes the retouch group', () => {
     expect(resolveEditorShortcut({ code: 'KeyM', key: 'm' })).toEqual({ type: 'tool', tool: 'rectSelect', tab: 'cleanup' });
     expect(resolveEditorShortcut({ code: 'KeyW', key: 'w' })).toEqual({ type: 'tool', tool: 'wand', tab: 'cleanup' });
-    expect(resolveEditorShortcut({ code: 'KeyR', key: 'r' })).toEqual({ type: 'tool', tool: 'blur' });
+    expect(resolveEditorShortcut({ code: 'KeyI', key: 'i' })).toEqual({ type: 'tool', tool: 'eyedropper' });
+    expect(resolveEditorShortcut({ code: 'KeyS', key: 's' })).toEqual({ type: 'tool', tool: 'cloneStamp' });
+    expect(resolveEditorShortcut({ code: 'KeyR', key: 'r' }, undefined, 'sharpen')).toEqual({ type: 'tool', tool: 'sharpen' });
     expect(resolveEditorShortcut({ code: 'KeyG', key: 'g' })).toBeNull();
   });
 

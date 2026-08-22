@@ -395,7 +395,7 @@ export interface ImageDocument {
 }
 
 export type CleanupMethod = 'auto' | 'white' | 'background' | 'inpaint';
-export type ActiveTool = 'select' | 'brush' | 'maskBrush' | 'eraser' | 'pan' | 'lasso' | 'polyLasso' | 'rectSelect' | 'text' | 'wand' | 'crop' | 'blur';
+export type ActiveTool = 'select' | 'brush' | 'maskBrush' | 'eraser' | 'pan' | 'lasso' | 'polyLasso' | 'rectSelect' | 'text' | 'wand' | 'crop' | 'blur' | 'eyedropper' | 'cloneStamp' | 'smudge' | 'sharpen';
 
 export type SelectionMode = 'replace' | 'add' | 'subtract';
 export type LeftTab = 'watermark' | 'cleanup' | 'text' | 'insert' | 'transform' | 'bubble';

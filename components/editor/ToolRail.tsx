@@ -1,11 +1,11 @@
 'use client';
 
-import { Brush, Crop, Eraser, Hand, Lasso, MousePointer2, ScanLine, SquareDashed, Type, WandSparkles, Paintbrush, Waypoints } from 'lucide-react';
+import { Blend, Brush, Crop, Eraser, Hand, Lasso, MousePointer2, Pipette, ScanLine, SquareDashed, Stamp, Type, WandSparkles, Paintbrush, Waypoints } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { useEditorUiStore } from '@/store/useEditorUiStore';
 import type { ActiveTool, LeftTab } from '@/types';
 
-const tools: Array<{ tool: ActiveTool; label: string; hotkey: string; icon: typeof Brush; tab?: LeftTab; hint?: string }> = [
+const tools: Array<{ tool: ActiveTool; label: string; hotkey?: string; icon: typeof Brush; tab?: LeftTab; hint?: string }> = [
   { tool: 'select', label: 'Выделение', hotkey: 'V', icon: MousePointer2 },
   { tool: 'pan', label: 'Рука', hotkey: 'H / Space', icon: Hand },
   { tool: 'brush', label: 'Кисть', hotkey: 'B', icon: Brush, tab: 'cleanup' },
@@ -17,7 +17,11 @@ const tools: Array<{ tool: ActiveTool; label: string; hotkey: string; icon: type
   { tool: 'wand', label: 'Волшебная палочка', hotkey: 'W', icon: WandSparkles, tab: 'cleanup', hint: 'Выделение связанной области похожего цвета' },
   { tool: 'text', label: 'Текст', hotkey: 'T', icon: Type, tab: 'text' },
   { tool: 'crop', label: 'Кадрирование / Размер', hotkey: 'C', icon: Crop, tab: 'transform' },
-  { tool: 'blur', label: 'Размытие / Пикселизация', hotkey: 'R', icon: ScanLine },
+  { tool: 'blur', label: 'Blur / Pixelate / Noise', icon: ScanLine },
+  { tool: 'eyedropper', label: 'Пипетка', hotkey: 'I', icon: Pipette },
+  { tool: 'cloneStamp', label: 'Штамп', hotkey: 'S', icon: Stamp },
+  { tool: 'smudge', label: 'Палец', hotkey: 'R', icon: Blend },
+  { tool: 'sharpen', label: 'Резкость', hotkey: 'R', icon: ScanLine },
 ];
 
 export function ToolRail() {
@@ -32,9 +36,9 @@ export function ToolRail() {
         <button
           key={tool}
           className="tool-rail-button"
-          aria-label={`${label}, клавиша ${hotkey}`}
+          aria-label={hotkey ? `${label}, клавиша ${hotkey}` : label}
           aria-pressed={activeTool === tool}
-          title={`${label} (${hotkey})${hint ? ` — ${hint}` : ''}`}
+          title={`${label}${hotkey ? ` (${hotkey})` : ''}${hint ? ` — ${hint}` : ''}`}
           disabled={disabled}
           onClick={() => {
             cancelActiveOperation();
