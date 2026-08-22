@@ -137,24 +137,28 @@ function validPosition(value: number) {
 
 export function sanitizeText(text: TextObject): TextObject | null {
   if (![text.x, text.y, text.width, text.fontSize].every(validPosition)) return null;
-  const x = clamp01(text.x);
-  const y = clamp01(text.y);
   const { height, textMode, ...rest } = text;
   const paragraph = textMode === 'paragraph';
+  const paragraphWidth = Math.min(1, Math.abs(text.width));
+  const paragraphHeight = Number.isFinite(height) && height! > 0 ? Math.min(1, height!) : undefined;
+  let x = clamp01(text.x);
+  let y = clamp01(text.y);
+  if (paragraph && paragraphWidth > 0 && x === 1) x = 1 - paragraphWidth;
+  if (paragraph && paragraphHeight && y === 1) y = 1 - paragraphHeight;
   const sanitized: TextObject = {
     ...rest,
     x,
     y,
     width: paragraph
-      ? Math.min(1 - x, Math.abs(text.width))
+      ? Math.min(1 - x, paragraphWidth)
       : Math.max(0.01, Math.min(1 - x, Math.abs(text.width))),
     fontSize: Math.max(0.003, Math.min(0.5, Math.abs(text.fontSize))),
   };
   if (textMode === 'point' || textMode === 'paragraph') sanitized.textMode = textMode;
-  if (Number.isFinite(height) && height! > 0) {
+  if (paragraphHeight !== undefined) {
     sanitized.height = paragraph
-      ? Math.min(1 - y, height!)
-      : Math.max(0.003, Math.min(1 - y, height!));
+      ? Math.min(1 - y, paragraphHeight)
+      : Math.max(0.003, Math.min(1 - y, paragraphHeight));
   }
   return sanitized;
 }

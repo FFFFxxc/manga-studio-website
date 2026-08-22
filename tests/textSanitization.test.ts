@@ -66,6 +66,33 @@ describe('paragraph text sanitization', () => {
     expect(sanitized?.height).toBeCloseTo(0.001, 12);
   });
 
+  // Mutation caught: clamping extent against `1 - origin` at an exact right
+  // or bottom boundary collapses a valid paragraph box to zero area.
+  it('moves exact-boundary paragraph origins inward without collapsing their box', () => {
+    const boundaryParagraph = { ...paragraph, x: 1, y: 1 };
+    useStore.setState({
+      documents: [makeEditorDocument({
+        width: 4000,
+        height: 12000,
+        texts: [boundaryParagraph],
+        layerOrder: [{ type: 'text', id: boundaryParagraph.id }],
+      })],
+      activeDocIndex: 0,
+    });
+
+    useStore.getState().updateText(boundaryParagraph.id, { text: 'Boundary update' });
+
+    const updated = useStore.getState().documents[0].texts[0];
+    expect(updated.x).toBe(1 - 24 / 4000);
+    expect(updated.y).toBe(1 - 24 / 12000);
+    expect(updated.width).toBe(24 / 4000);
+    expect(updated.height).toBe(24 / 12000);
+    expect(updated.width).toBeGreaterThan(0);
+    expect(updated.height ?? 0).toBeGreaterThan(0);
+    expect(updated.x + updated.width).toBeLessThanOrEqual(1);
+    expect(updated.y + (updated.height ?? 0)).toBeLessThanOrEqual(1);
+  });
+
   it('retains legacy and point minimum-width compatibility', () => {
     expect(sanitizeText({ ...paragraph, textMode: undefined, width: 0.006 })?.width).toBe(0.01);
     expect(sanitizeText({ ...paragraph, textMode: 'point', width: 0.006 })?.width).toBe(0.01);
