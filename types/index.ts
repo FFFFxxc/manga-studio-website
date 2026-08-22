@@ -495,6 +495,17 @@ export interface BlurSettings {
   hardness: number;
 }
 
+export type RasterEffectMode = 'blur' | 'pixelate' | 'noise' | 'sharpen';
+
+export interface RasterEffectParameters {
+  radius: number;
+  strength: number;
+  cellSize: number;
+  noiseAmount: number;
+  noiseMonochrome: boolean;
+  seed: number;
+}
+
 export interface TranslationMaskSettings {
   shape: TranslationMaskShape;
   fill: string;
