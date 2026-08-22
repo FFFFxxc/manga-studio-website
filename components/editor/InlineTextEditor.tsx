@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { TextObject, ViewportState } from '@/types';
+import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
 
 interface Props {
   textObj: TextObject;
@@ -41,6 +42,7 @@ export function InlineTextEditor({
   const scaledWidth = textObj.width * docWidth * viewport.scale;
   const isParagraph = textObj.textMode === 'paragraph';
   const scaledHeight = (textObj.height ?? 0) * docHeight * viewport.scale;
+  const editorBox = getInlineTextEditorBox(scaledWidth, scaledHeight, isParagraph);
   const scaledStroke = textObj.stroke && textObj.strokeWidth > 0
     ? textObj.strokeWidth * viewport.scale
     : 0;
@@ -61,7 +63,7 @@ export function InlineTextEditor({
     const el = ref.current;
     if (!el) return;
     if (isParagraph) {
-      el.style.height = `${Math.max(1, scaledHeight)}px`;
+      el.style.height = `${editorBox.height}px`;
       measureOverflow();
       return;
     }
@@ -134,8 +136,8 @@ export function InlineTextEditor({
         position: 'absolute',
         left: screenX,
         top: screenY,
-        width: Math.max(80, scaledWidth),
-        height: isParagraph ? Math.max(1, scaledHeight) : undefined,
+        width: editorBox.width,
+        height: editorBox.height,
         minHeight: isParagraph ? undefined : scaledFontSize * textObj.lineHeight,
         fontSize: scaledFontSize,
         fontFamily: textObj.fontFamily,

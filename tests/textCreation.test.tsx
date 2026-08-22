@@ -320,6 +320,42 @@ describe('text creation drafts', () => {
     expect(Number.parseFloat(marker.style.top)).toBeCloseTo(415, 5);
   });
 
+  // Mutation caught: deriving marker geometry from an unclamped normalized
+  // box loses the textarea's 80px/1px border-box minima at low zoom.
+  it('uses the clamped paragraph editor dimensions for a transformed overflow marker', () => {
+    seedEditor([pointText({
+      textMode: 'paragraph',
+      width: 0.01,
+      height: 0.0001,
+      rotation: 90,
+      scaleX: 2,
+      scaleY: 0.5,
+    })]);
+    render(<CanvasArea />);
+
+    fireEvent.doubleClick(screen.getByTestId('konva-text'));
+    const editor = screen.getByRole('textbox') as HTMLTextAreaElement;
+    Object.defineProperties(editor, {
+      clientHeight: { configurable: true, value: 1 },
+      scrollHeight: { configurable: true, value: 180 },
+    });
+    fireEvent.input(editor);
+
+    const marker = screen.getByTestId('paragraph-text-overflow-marker');
+    const originX = Number.parseFloat(editor.style.left);
+    const originY = Number.parseFloat(editor.style.top);
+    const editorWidth = Number.parseFloat(editor.style.width);
+    const editorHeight = Number.parseFloat(editor.style.height);
+    const radians = Math.PI / 2;
+    const expectedX = originX + editorWidth * 2 * Math.cos(radians) - editorHeight * 0.5 * Math.sin(radians) + 3;
+    const expectedY = originY + editorWidth * 2 * Math.sin(radians) + editorHeight * 0.5 * Math.cos(radians) + 3;
+
+    expect(editorWidth).toBe(80);
+    expect(editorHeight).toBe(1);
+    expect(Number.parseFloat(marker.style.left)).toBeCloseTo(expectedX, 5);
+    expect(Number.parseFloat(marker.style.top)).toBeCloseTo(expectedY, 5);
+  });
+
   // Mutation caught: committing whitespace or cancelling by Escape must not
   // route through addText/delete and leave an undo snapshot behind.
   it('leaves no text or history after blank and cancelled drafts', async () => {

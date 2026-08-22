@@ -45,6 +45,7 @@ import { applyRasterEffectPreview } from '@/utils/rasterEffects';
 import { PerspectiveOverlay } from './PerspectiveOverlay';
 import { TextDraftOverlay } from './TextDraftOverlay';
 import { createTextDraftRect, type TextDraftRect } from '@/utils/textBox';
+import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
 
 const MAX_PREVIEW_SIDE = 1800;
 const NEUTRAL_RASTER_ADJUSTMENTS: BaseLayerAdjustments = { brightness: 1, contrast: 1, saturation: 1 };
@@ -2868,15 +2869,16 @@ export function CanvasArea() {
         const paragraphHeight = (editingTxt.height ?? 0) * activeDoc.height * previewScale * viewport.scale;
         const paragraphX = editingTxt.x * activeDoc.width * previewScale * viewport.scale + viewport.x;
         const paragraphY = editingTxt.y * activeDoc.height * previewScale * viewport.scale + viewport.y;
+        const editorBox = getInlineTextEditorBox(paragraphWidth, paragraphHeight, editingTxt.textMode === 'paragraph');
         const markerScaleX = Number.isFinite(editingTxt.scaleX) ? editingTxt.scaleX : 1;
         const markerScaleY = Number.isFinite(editingTxt.scaleY) ? editingTxt.scaleY : 1;
         const markerRadians = (Number.isFinite(editingTxt.rotation) ? editingTxt.rotation : 0) * Math.PI / 180;
         const markerX = paragraphX
-          + paragraphWidth * markerScaleX * Math.cos(markerRadians)
-          - paragraphHeight * markerScaleY * Math.sin(markerRadians);
+          + editorBox.width * markerScaleX * Math.cos(markerRadians)
+          - (editorBox.height ?? 0) * markerScaleY * Math.sin(markerRadians);
         const markerY = paragraphY
-          + paragraphWidth * markerScaleX * Math.sin(markerRadians)
-          + paragraphHeight * markerScaleY * Math.cos(markerRadians);
+          + editorBox.width * markerScaleX * Math.sin(markerRadians)
+          + (editorBox.height ?? 0) * markerScaleY * Math.cos(markerRadians);
         return (
           <>
             <InlineTextEditor
