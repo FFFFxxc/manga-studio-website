@@ -256,7 +256,7 @@ describe('text creation drafts', () => {
     const stage = screen.getByTestId('canvas-stage');
 
     clickCanvas(stage, { x: 220, y: 170 });
-    await user.type(screen.getByRole('textbox'), '   {enter}');
+    await user.type(screen.getByRole('textbox'), '   {Control>}{Enter}{/Control}');
     expect(useStore.getState().documents[0].texts).toHaveLength(0);
     expect(useStore.getState().documents[0].past).toHaveLength(0);
 
@@ -273,7 +273,7 @@ describe('text creation drafts', () => {
     render(<CanvasArea />);
     clickCanvas(screen.getByTestId('canvas-stage'), { x: 240, y: 180 });
 
-    await user.type(screen.getByRole('textbox'), 'Новый текст{enter}');
+    await user.type(screen.getByRole('textbox'), 'Новый текст{Control>}{Enter}{/Control}');
 
     const state = useStore.getState();
     expect(state.documents[0].texts).toHaveLength(1);
@@ -313,7 +313,7 @@ describe('text creation drafts', () => {
     await user.dblClick(screen.getByTestId('konva-text'));
     const secondEditor = screen.getByRole('textbox');
     await user.clear(secondEditor);
-    await user.type(secondEditor, 'Updated{enter}');
+    await user.type(secondEditor, 'Updated{Control>}{Enter}{/Control}');
     expect(useStore.getState().documents[0].texts[0].text).toBe('Updated');
     expect(useStore.getState().documents[0].past).toHaveLength(1);
   });

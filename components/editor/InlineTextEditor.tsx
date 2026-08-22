@@ -11,6 +11,7 @@ interface Props {
   isNew: boolean;     // if true, select all on mount
   onCommit: (text: string) => void;
   onCancel: () => void;
+  onOverflowChange?: (isOverflowing: boolean) => void;
 }
 
 /**
@@ -28,14 +29,18 @@ export function InlineTextEditor({
   isNew,
   onCommit,
   onCancel,
+  onOverflowChange,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const finishedRef = useRef(false);
 
   // Compute screen-space position matching the Konva Text node
   const screenX = textObj.x * docWidth * viewport.scale + viewport.x;
   const screenY = textObj.y * docHeight * viewport.scale + viewport.y;
   const scaledFontSize = textObj.fontSize * docHeight * viewport.scale;
   const scaledWidth = textObj.width * docWidth * viewport.scale;
+  const isParagraph = textObj.textMode === 'paragraph';
+  const scaledHeight = (textObj.height ?? 0) * docHeight * viewport.scale;
   const scaledStroke = textObj.stroke && textObj.strokeWidth > 0
     ? textObj.strokeWidth * viewport.scale
     : 0;
@@ -43,18 +48,32 @@ export function InlineTextEditor({
     ? textObj.shadowBlur * viewport.scale
     : 0;
 
-  // Auto-grow the textarea to fit its content (no scrollbars, no clipping)
-  function autoGrow() {
+  function measureOverflow() {
     const el = ref.current;
     if (!el) return;
+    const overflowing = el.scrollHeight > el.clientHeight;
+    el.dataset.overflowing = String(overflowing);
+    onOverflowChange?.(overflowing);
+  }
+
+  // Point text grows with content; paragraph text keeps its drawn rectangle.
+  function fitEditor() {
+    const el = ref.current;
+    if (!el) return;
+    if (isParagraph) {
+      el.style.height = `${Math.max(1, scaledHeight)}px`;
+      measureOverflow();
+      return;
+    }
     el.style.height = '0px';
     el.style.height = `${el.scrollHeight}px`;
+    measureOverflow();
   }
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    autoGrow();
+    fitEditor();
     el.focus();
     if (isNew) {
       el.select();
@@ -65,26 +84,47 @@ export function InlineTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew]);
 
-  // Re-fit height when zoom changes the rendered font size
+  // Re-fit when the rendered text metrics or paragraph bounds change.
   useEffect(() => {
-    autoGrow();
+    fitEditor();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scaledFontSize, scaledWidth]);
+  }, [scaledFontSize, scaledWidth, scaledHeight, isParagraph]);
+
+  useEffect(() => {
+    let active = true;
+    void document.fonts?.ready.then(() => {
+      if (active) fitEditor();
+    });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scaledFontSize, scaledWidth, scaledHeight, isParagraph]);
 
   function commit() {
-    if (ref.current) onCommit(ref.current.value);
+    if (finishedRef.current || !ref.current) return;
+    finishedRef.current = true;
+    onCommit(ref.current.value);
+  }
+
+  function cancel() {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onCancel();
   }
 
   return (
     <textarea
       ref={ref}
       defaultValue={textObj.text}
-      onInput={autoGrow}
+      data-text-mode={isParagraph ? 'paragraph' : 'point'}
+      onInput={fitEditor}
       onKeyDown={e => {
         if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-        if (e.key === 'Escape') { onCancel(); return; }
-        // Ctrl/Cmd+Enter or plain Enter when no Shift → commit
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancel();
+          return;
+        }
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           commit();
         }
@@ -95,7 +135,8 @@ export function InlineTextEditor({
         left: screenX,
         top: screenY,
         width: Math.max(80, scaledWidth),
-        minHeight: scaledFontSize * textObj.lineHeight,
+        height: isParagraph ? Math.max(1, scaledHeight) : undefined,
+        minHeight: isParagraph ? undefined : scaledFontSize * textObj.lineHeight,
         fontSize: scaledFontSize,
         fontFamily: textObj.fontFamily,
         color: textObj.fill,

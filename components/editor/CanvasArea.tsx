@@ -1138,7 +1138,7 @@ export function CanvasArea() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [textDraftRect, setTextDraftRect] = useState<TextDraftRect | null>(null);
   const [pendingTextDraft, setPendingTextDraft] = useState<PendingTextDraft | null>(null);
-  const textEditorHostRef = useRef<HTMLDivElement>(null);
+  const [textEditorOverflowing, setTextEditorOverflowing] = useState(false);
   const shiftPressedRef = useRef(false);
   const checkerPattern = useRef<HTMLCanvasElement | null>(null);
   if (typeof document !== 'undefined' && !checkerPattern.current) checkerPattern.current = makeCheckerPattern();
@@ -1571,12 +1571,6 @@ export function CanvasArea() {
       clearTextDraftState();
     }
   }, [activeDoc?.id, pendingTextDraft?.documentId]);
-
-  useEffect(() => {
-    const editor = textEditorHostRef.current?.querySelector('textarea');
-    if (!editor || !pendingTextDraft) return;
-    editor.dataset.textMode = pendingTextDraft.object.textMode ?? 'point';
-  }, [inlineEditingTextId, pendingTextDraft]);
 
   const handleMouseDown = (e: Konva.KonvaEventObject<PointerEvent>) => {
     if (textPointerGestureRef.current) return;
@@ -2864,8 +2858,12 @@ export function CanvasArea() {
           ? pendingTextDraft.object
           : activeDoc.texts.find(t => t.id === inlineEditingTextId);
         if (!editingTxt) return null;
+        const paragraphWidth = editingTxt.width * activeDoc.width * previewScale * viewport.scale;
+        const paragraphHeight = (editingTxt.height ?? 0) * activeDoc.height * previewScale * viewport.scale;
+        const paragraphX = editingTxt.x * activeDoc.width * previewScale * viewport.scale + viewport.x;
+        const paragraphY = editingTxt.y * activeDoc.height * previewScale * viewport.scale + viewport.y;
         return (
-          <div ref={textEditorHostRef} style={{ display: 'contents' }}>
+          <>
             <InlineTextEditor
               key={inlineEditingTextId}
               textObj={editingTxt}
@@ -2875,8 +2873,28 @@ export function CanvasArea() {
               isNew={isNewTextRef.current}
               onCommit={commitTextDraft}
               onCancel={cancelTextDraft}
+              onOverflowChange={setTextEditorOverflowing}
             />
-          </div>
+            {editingTxt.textMode === 'paragraph' && textEditorOverflowing && (
+              <span
+                aria-label="Текст выходит за границы"
+                data-testid="paragraph-text-overflow-marker"
+                style={{
+                  position: 'absolute',
+                  left: paragraphX + paragraphWidth + 3,
+                  top: paragraphY + paragraphHeight + 3,
+                  zIndex: 51,
+                  pointerEvents: 'none',
+                  color: 'var(--accent)',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}
+              >
+                +
+              </span>
+            )}
+          </>
         );
       })()}
 
