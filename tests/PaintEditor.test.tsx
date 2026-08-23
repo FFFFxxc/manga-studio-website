@@ -379,6 +379,20 @@ describe('PaintEditor', () => {
     }));
   });
 
+  it('uses a visible contrasting stop for a dark solid paint', () => {
+    const onChange = vi.fn();
+    render(<PaintEditor label="Заливка" value={{ type: 'solid', color: '#000000' }} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Линейный' }));
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'linear',
+      stops: expect.arrayContaining([
+        expect.objectContaining({ offset: 0, color: '#000000' }),
+        expect.objectContaining({ offset: 1, color: '#ffffff' }),
+      ]),
+    }));
+  });
+
   it('changes the selected stop color', () => {
     const onChange = vi.fn();
     const value = {

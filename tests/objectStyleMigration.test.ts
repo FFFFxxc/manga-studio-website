@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeBubble, sanitizeShape } from '@/utils/coordinates';
-import type { BubbleObject, ShapeObject } from '@/types';
+import { sanitizeBubble, sanitizeShape, sanitizeText } from '@/utils/coordinates';
+import type { BubbleObject, ShapeObject, TextObject } from '@/types';
 
 const legacyShape: ShapeObject = {
   id: 'shape-1',
@@ -44,6 +44,13 @@ const legacyBubble: BubbleObject = {
   },
 };
 
+const legacyText: TextObject = {
+  id: 'text-1', text: 'Текст', fontFamily: 'Arial', fontSize: 0.05,
+  fill: '#123456', stroke: '', strokeWidth: 0,
+  shadowColor: 'transparent', shadowBlur: 0, lineHeight: 1.2, align: 'center',
+  width: 0.3, x: 0.2, y: 0.2, scaleX: 1, scaleY: 1, rotation: 0, visible: true,
+};
+
 describe('vector style migration', () => {
   it('creates solid styles from legacy shape colors', () => {
     const sanitized = sanitizeShape(legacyShape);
@@ -58,6 +65,12 @@ describe('vector style migration', () => {
     expect(sanitized?.fillStyle).toEqual({ type: 'solid', color: '#ffffff' });
     expect(sanitized?.strokeStyle).toEqual({ type: 'solid', color: '#000000' });
     expect(sanitized?.glow?.enabled).toBe(false);
+  });
+
+  it('creates solid paints from legacy text colors', () => {
+    const sanitized = sanitizeText(legacyText);
+    expect(sanitized?.fillStyle).toEqual({ type: 'solid', color: '#123456' });
+    expect(sanitized?.strokeStyle).toEqual({ type: 'solid', color: 'transparent' });
   });
 
   it('sanitizes an invalid gradient without dropping the object', () => {

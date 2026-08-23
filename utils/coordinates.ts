@@ -153,6 +153,11 @@ export function sanitizeText(text: TextObject): TextObject | null {
       ? Math.min(1 - x, paragraphWidth)
       : Math.max(0.01, Math.min(1 - x, Math.abs(text.width))),
     fontSize: Math.max(0.003, Math.min(0.5, Math.abs(text.fontSize))),
+    fillStyle: normalizePaintStyle(text.fillStyle, text.fill || '#000000'),
+    strokeStyle: normalizePaintStyle(
+      text.strokeStyle,
+      text.stroke === '' ? 'transparent' : text.stroke || '#000000',
+    ),
   };
   if (textMode === 'point' || textMode === 'paragraph') sanitized.textMode = textMode;
   if (paragraphHeight !== undefined) {

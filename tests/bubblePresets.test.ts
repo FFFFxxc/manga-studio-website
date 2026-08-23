@@ -19,6 +19,7 @@ describe('bubble presets', () => {
     expect(first.fillStyle).toEqual(second.fillStyle);
     expect(first.fillStyle).not.toBe(second.fillStyle);
     expect(first.glow?.enabled).toBe(false);
+    expect(first.strokeWidth).toBe(0);
   });
 
   it('creates tails only for bubble kinds that render them', () => {

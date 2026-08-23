@@ -47,6 +47,12 @@ function makeDocument(): ImageDocument {
     }],
     activeMaskId: 'mask', selectedLayer: null,
     watermarks: [watermark], texts: [text], shapes: [shape], bubbles: [],
+    translationMasks: [{
+      id: 'translation-mask', name: 'Translation mask', x: 0.15, y: 0.2,
+      width: 0.25, height: 0.12, rotation: 0, scaleX: 1, scaleY: 1,
+      shape: 'rounded-rect', fill: '#fff', opacity: 1, feather: 2,
+      padding: 0.01, visible: true, locked: true,
+    }],
     past: [], future: [], hasChanges: false,
   };
 }
@@ -63,6 +69,7 @@ describe('store layer locking', () => {
     store.updateWatermark('wm', { rotation: 90, visible: false });
     store.updateAiLayer('ai', { x: 0.8, opacity: 0.4 });
     store.updateBaseLayer({ x: 0.7, opacity: 0.3 });
+    store.updateTranslationMask('translation-mask', { x: 0.8, opacity: 0.4 }, { history: false });
 
     const doc = useStore.getState().documents[0];
     expect(doc.texts[0]).toMatchObject({ x: 0.1, fill: '#f00' });
@@ -70,6 +77,19 @@ describe('store layer locking', () => {
     expect(doc.watermarks[0]).toMatchObject({ rotation: 0, visible: false });
     expect(doc.aiLayers[0]).toMatchObject({ x: 0.1, opacity: 0.4 });
     expect(doc.baseLayer).toMatchObject({ x: 0.05, opacity: 0.3 });
+    expect(doc.translationMasks?.[0]).toMatchObject({ x: 0.15, opacity: 0.4 });
+  });
+
+  it('allows a locked translation mask to be unlocked with one undo step', () => {
+    useStore.getState().updateTranslationMask('translation-mask', { locked: false }, { history: true });
+
+    let doc = useStore.getState().documents[0];
+    expect(doc.translationMasks?.[0].locked).toBe(false);
+    expect(doc.past).toHaveLength(1);
+
+    useStore.getState().undo();
+    doc = useStore.getState().documents[0];
+    expect(doc.translationMasks?.[0].locked).toBe(true);
   });
 
   // Mutation caught: omitting perspectiveSourceBounds from the central

@@ -56,7 +56,9 @@ export function createShapeFromSettings(
     height: open ? (tallPath ? 0.14 : 0.08) : 0.2,
     fill: open ? '' : settings.fill,
     stroke: settings.stroke,
-    strokeWidth: settings.strokeWidth,
+    // Open paths use their stroke as the object itself, not as an automatic
+    // outline. Closed shapes start without an outline until the user adds one.
+    strokeWidth: open ? Math.max(1, settings.strokeWidth || 4) : settings.strokeWidth,
     opacity: settings.opacity,
     rotation: 0,
     scaleX: 1,

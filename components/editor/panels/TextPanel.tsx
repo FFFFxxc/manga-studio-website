@@ -6,12 +6,14 @@ import { useStore } from '@/store/useStore';
 import { uid } from '@/utils/imageUtils';
 import { saveCustomFont, hasCustomFont, deleteCustomFont } from '@/utils/fonts';
 import { translateText, type TranslateLang } from '@/utils/translate';
-import type { TextObject, TranslationMaskObject } from '@/types';
+import type { PaintStyle, TextObject, TranslationMaskObject } from '@/types';
 import { DEFAULT_ANIME_FONT, MANGA_FONTS, TEXT_PRESETS } from '@/types';
 import { PanelRow, PanelSlider, PanelLabel, PanelSection } from './PanelComponents';
 import { clampOcrBox } from '@/utils/coordinates';
 import { TEXT_PRESET_LABELS } from '@/lib/strings.ru';
 import { toast } from '@/hooks/use-toast';
+import { PaintEditor } from './PaintEditor';
+import { clonePaintStyle } from '@/utils/objectPaint';
 
 function DeferredColorInput({ label, value, onCommit }: {
   label: string;
@@ -102,7 +104,13 @@ export function TextPanel() {
 
   function applyPreset(key: string) {
     const preset = TEXT_PRESETS[key];
-    updateTextSettings({ ...preset });
+    updateTextSettings({
+      ...preset,
+      ...(preset.fill ? { fillStyle: { type: 'solid', color: preset.fill } as PaintStyle } : {}),
+      ...(preset.stroke !== undefined ? {
+        strokeStyle: { type: 'solid', color: preset.stroke || 'transparent' } as PaintStyle,
+      } : {}),
+    });
   }
 
   async function handleCustomFont(e: React.ChangeEvent<HTMLInputElement>) {
@@ -289,6 +297,8 @@ export function TextPanel() {
           fill: textSettings.fill,
           stroke: '',
           strokeWidth: 0,
+          fillStyle: clonePaintStyle(textSettings.fillStyle),
+          strokeStyle: { type: 'solid', color: 'transparent' },
           shadowColor: '#000000',
           shadowBlur: 0,
           lineHeight: LINE_HEIGHT,
@@ -329,12 +339,22 @@ export function TextPanel() {
     fill: selectedText.fill,
     stroke: selectedText.stroke,
     strokeWidth: selectedText.strokeWidth,
+    fillStyle: selectedText.fillStyle ?? { type: 'solid' as const, color: selectedText.fill || '#000000' },
+    strokeStyle: selectedText.strokeStyle ?? { type: 'solid' as const, color: selectedText.stroke || 'transparent' },
     shadowColor: selectedText.shadowColor,
     shadowBlur: selectedText.shadowBlur,
     lineHeight: selectedText.lineHeight,
     align: selectedText.align,
     width: selectedText.width,
   } : textSettings;
+
+  const paintFallbackColor = (paint: PaintStyle, fallback: string) => paint.type === 'solid'
+    ? paint.color
+    : paint.stops[0]?.color ?? fallback;
+
+  function beginTextPaintGesture() {
+    if (selectedText) pushHistory();
+  }
 
   function update(updates: Partial<typeof textSettings>, options?: { history?: boolean }) {
     const persistentColors = (['fill', 'stroke', 'shadowColor'] as const)
@@ -347,6 +367,12 @@ export function TextPanel() {
         rememberTextColor(color);
       }
       updateTextSettings(settingsUpdate);
+    }
+    if (updates.fillStyle || updates.strokeStyle) {
+      updateTextSettings({
+        ...(updates.fillStyle ? { fillStyle: clonePaintStyle(updates.fillStyle) } : {}),
+        ...(updates.strokeStyle ? { strokeStyle: clonePaintStyle(updates.strokeStyle) } : {}),
+      });
     }
     if (selectedText) {
       const changed = Object.entries(updates).some(([key, value]) => selectedText[key as keyof TextObject] !== value);
@@ -634,14 +660,17 @@ export function TextPanel() {
         </div>
       )}
 
-      {/* Colors */}
-      <PanelRow label="Цвет текста">
-        <DeferredColorInput
-          label="Цвет текста"
-          value={settings.fill}
-          onCommit={color => update({ fill: color }, { history: true })}
-        />
-      </PanelRow>
+      {/* Text paint uses the same editor as shapes, including linear/radial gradients. */}
+      <PaintEditor
+        label="Заливка текста"
+        solidColorAriaLabel="Цвет текста"
+        value={settings.fillStyle}
+        onGestureStart={beginTextPaintGesture}
+        onChange={paint => update({
+          fillStyle: paint,
+          fill: paintFallbackColor(paint, settings.fill),
+        }, { history: false })}
+      />
       {recentColors.length > 0 && (
         <div aria-label="Недавние цвета" style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: -4 }}>
           {recentColors.map(color => (
@@ -650,19 +679,18 @@ export function TextPanel() {
               type="button"
               aria-label={`Применить цвет ${color}`}
               title={color}
-              onClick={() => update({ fill: color }, { history: true })}
+              onClick={() => update({
+                fill: color,
+                fillStyle: { type: 'solid', color },
+              }, { history: true })}
               style={{ width: 20, height: 20, borderRadius: 4, border: '1px solid var(--border-default)', background: color, cursor: 'pointer' }}
             />
           ))}
         </div>
       )}
-      <PanelRow label="Обводка">
-        <DeferredColorInput
-          label="Цвет обводки"
-          value={settings.stroke || '#000000'}
-          onCommit={color => update({ stroke: color }, { history: true })}
-        />
+      <PanelRow label="Толщина обводки">
         <input
+          aria-label="Толщина обводки"
           type="number"
           value={settings.strokeWidth}
           min={0}
@@ -671,6 +699,17 @@ export function TextPanel() {
           style={{ width: 44 }}
         />
       </PanelRow>
+      <PaintEditor
+        label="Обводка текста"
+        solidColorAriaLabel="Цвет обводки"
+        value={settings.strokeStyle}
+        allowRadial={false}
+        onGestureStart={beginTextPaintGesture}
+        onChange={paint => update({
+          strokeStyle: paint,
+          stroke: paintFallbackColor(paint, settings.stroke || '#000000'),
+        }, { history: false })}
+      />
       <PanelRow label="Тень">
         <DeferredColorInput
           label="Цвет тени"

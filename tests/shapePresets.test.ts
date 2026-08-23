@@ -42,4 +42,10 @@ describe('shape presets', () => {
     expect(pointer.fillStyle).toEqual(settings.fillStyle);
     expect(pointer.fillStyle).not.toBe(settings.fillStyle);
   });
+
+  it('keeps closed outlines off by default while open paths remain visible', () => {
+    const noOutline = { ...settings, strokeWidth: 0 };
+    expect(createShapeFromSettings('rect', noOutline).strokeWidth).toBe(0);
+    expect(createShapeFromSettings('line', noOutline).strokeWidth).toBe(4);
+  });
 });

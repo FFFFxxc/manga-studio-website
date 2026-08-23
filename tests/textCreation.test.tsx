@@ -7,6 +7,9 @@ import type { TextObject } from '@/types';
 const stageCommitHook = vi.hoisted(() => ({
   callback: null as null | ((node: HTMLDivElement, cursor: string | undefined) => void),
 }));
+const toastHook = vi.hoisted(() => ({ toast: vi.fn() }));
+
+vi.mock('@/hooks/use-toast', () => ({ toast: toastHook.toast }));
 
 vi.mock('react-konva', () => {
   type Point = { x: number; y: number };
@@ -215,6 +218,7 @@ function dispatchUnflushedPointer(
 describe('text creation drafts', () => {
   beforeEach(() => {
     stageCommitHook.callback = null;
+    toastHook.toast.mockClear();
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       fillStyle: '',
@@ -507,6 +511,47 @@ describe('text creation drafts', () => {
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(useStore.getState().documents[0].texts).toHaveLength(1);
     expect(useStore.getState().documents[0].past).toHaveLength(0);
+  });
+
+  it('offers to unlock a locked canvas layer only once and unlocks it from the toast', () => {
+    seedEditor([pointText({ locked: true })]);
+    useStore.setState({ activeTool: 'select' });
+    render(<CanvasArea />);
+
+    const text = screen.getByTestId('konva-text');
+    fireEvent.click(text);
+    fireEvent.click(text);
+
+    expect(toastHook.toast).toHaveBeenCalledTimes(1);
+    expect(toastHook.toast.mock.calls[0][0]).toMatchObject({
+      title: 'Слой заблокирован',
+    });
+    expect(useStore.getState().documents[0].texts[0].locked).toBe(true);
+    expect(useStore.getState().selectedObject).toBeNull();
+
+    const prompt = toastHook.toast.mock.calls[0][0] as {
+      action: React.ReactElement<{ onClick: () => void }>;
+    };
+    act(() => prompt.action.props.onClick());
+
+    const state = useStore.getState();
+    expect(state.documents[0].texts[0].locked).toBe(false);
+    expect(state.selectedObject).toEqual({ id: 'text-existing', type: 'text' });
+    expect(state.documents[0].past).toHaveLength(1);
+
+    fireEvent.click(text);
+    expect(toastHook.toast).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open the inline editor for a locked text layer', () => {
+    seedEditor([pointText({ locked: true })]);
+    useStore.setState({ activeTool: 'select' });
+    render(<CanvasArea />);
+
+    fireEvent.doubleClick(screen.getByTestId('konva-text'));
+
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(useStore.getState().documents[0].texts[0].locked).toBe(true);
   });
 
   it('cancels an uncommitted geometry draft on pointercancel or blur', () => {

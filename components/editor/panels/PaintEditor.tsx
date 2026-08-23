@@ -32,9 +32,21 @@ function newStopId() {
   return `stop-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function contrastingStopColor(color: string) {
+  const match = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (!match) return '#000000';
+  const value = Number.parseInt(match[1], 16);
+  const red = (value >> 16) & 0xff;
+  const green = (value >> 8) & 0xff;
+  const blue = value & 0xff;
+  const luminance = (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
+  return luminance < 0.45 ? '#ffffff' : '#000000';
+}
+
 export interface PaintEditorProps {
   label: string;
   value: PaintStyle;
+  solidColorAriaLabel?: string;
   glow?: GlowStyle;
   allowRadial?: boolean;
   onGestureStart?: () => void;
@@ -45,6 +57,7 @@ export interface PaintEditorProps {
 export function PaintEditor({
   label,
   value,
+  solidColorAriaLabel,
   glow,
   allowRadial = true,
   onGestureStart,
@@ -85,7 +98,9 @@ export function PaintEditor({
     }
     if (paint.type === type) return;
     const baseColor = paint.type === 'solid' ? paint.color : (stops[0]?.color ?? '#ffffff');
-    const endColor = paint.type === 'solid' ? '#000000' : (stops.at(-1)?.color ?? '#000000');
+    const endColor = paint.type === 'solid'
+      ? contrastingStopColor(baseColor)
+      : (stops.at(-1)?.color ?? contrastingStopColor(baseColor));
     const next = type === 'linear'
       ? { type: 'linear' as const, angle: 90, stops: [
         { id: newStopId(), offset: 0, color: baseColor },
@@ -224,7 +239,7 @@ export function PaintEditor({
 
       {paint.type === 'solid' ? (
         <input
-          aria-label={`Цвет: ${label}`}
+          aria-label={solidColorAriaLabel ?? `Цвет: ${label}`}
           type="color"
           value={paint.color.startsWith('#') ? paint.color.slice(0, 7) : '#ffffff'}
           onPointerDown={() => onGestureStart?.()}

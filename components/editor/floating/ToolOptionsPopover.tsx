@@ -4,9 +4,10 @@ import { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { useEditorUiStore, beginEditorOperation } from '@/store/useEditorUiStore';
 import { FloatingPanel } from './FloatingPanel';
-import { DEFAULT_ANIME_FONT, MANGA_FONTS, type ActiveTool, type TextObject, type TranslationMaskObject } from '@/types';
+import { DEFAULT_ANIME_FONT, MANGA_FONTS, type ActiveTool, type PaintStyle, type TextObject, type TranslationMaskObject } from '@/types';
 import { hasCustomFont, saveCustomFont } from '@/utils/fonts';
 import { cropDocument, resizeCanvasDocument, resizeDocument } from '@/utils/imageUtils';
+import { PaintEditor } from '../panels/PaintEditor';
 
 const TOOL_LABELS: Partial<Record<ActiveTool, string>> = {
   text: 'Текст',
@@ -75,6 +76,8 @@ function TextOptions({ objectId }: { objectId?: string }) {
       fill: object.fill,
       stroke: object.stroke,
       strokeWidth: object.strokeWidth,
+      fillStyle: object.fillStyle ?? { type: 'solid' as const, color: object.fill || '#000000' },
+      strokeStyle: object.strokeStyle ?? { type: 'solid' as const, color: object.stroke || 'transparent' },
       shadowColor: object.shadowColor,
       shadowBlur: object.shadowBlur,
       shadowOffsetX: object.shadowOffsetX ?? 0,
@@ -92,6 +95,9 @@ function TextOptions({ objectId }: { objectId?: string }) {
     if (object) store.updateText(object.id, updates, { history });
   };
   const beginContinuous = () => { if (object) store.pushHistory(); };
+  const paintFallbackColor = (paint: PaintStyle, fallback: string) => paint.type === 'solid'
+    ? paint.color
+    : paint.stops[0]?.color ?? fallback;
   const fonts = [...MANGA_FONTS, ...store.customFonts.filter(name => !MANGA_FONTS.includes(name))];
 
   const uploadFont = async (file: File | undefined) => {
@@ -116,11 +122,31 @@ function TextOptions({ objectId }: { objectId?: string }) {
       <input ref={fileRef} hidden type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2" onChange={event => { void uploadFont(event.target.files?.[0]); event.target.value = ''; }} />
       <RangeField label="Размер" value={settings.fontSize} min={0.008} max={0.2} step={0.002} onPointerDown={beginContinuous} onChange={value => apply({ fontSize: value }, false)} format={value => `${Math.round(value * 1000) / 10}%`} />
       <RangeField label="Межстрочный" value={settings.lineHeight} min={0.7} max={2.5} step={0.05} onPointerDown={beginContinuous} onChange={value => apply({ lineHeight: value }, false)} format={value => value.toFixed(2)} />
-      <Field label="Цвет текста"><input aria-label="Цвет текста" type="color" value={settings.fill} onChange={event => apply({ fill: event.target.value })} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>
+      <PaintEditor
+        label="Заливка текста"
+        solidColorAriaLabel="Цвет текста"
+        value={settings.fillStyle}
+        onGestureStart={beginContinuous}
+        onChange={paint => apply({
+          fillStyle: paint,
+          fill: paintFallbackColor(paint, settings.fill),
+        }, false)}
+      />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 88px', gap: 6 }}>
-        <Field label="Обводка"><input aria-label="Цвет обводки" type="color" value={settings.stroke || '#000000'} onChange={event => apply({ stroke: event.target.value })} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>
+        <span style={{ alignSelf: 'center', fontSize: 11, color: 'var(--text-secondary)' }}>Толщина обводки</span>
         <input aria-label="Толщина обводки" type="number" min={0} max={40} value={settings.strokeWidth} onChange={event => apply({ strokeWidth: Number(event.target.value) })} style={fieldStyle} />
       </div>
+      <PaintEditor
+        label="Обводка текста"
+        solidColorAriaLabel="Цвет обводки"
+        value={settings.strokeStyle}
+        allowRadial={false}
+        onGestureStart={beginContinuous}
+        onChange={paint => apply({
+          strokeStyle: paint,
+          stroke: paintFallbackColor(paint, settings.stroke || '#000000'),
+        }, false)}
+      />
       <Field label="Цвет тени"><input aria-label="Цвет тени" type="color" value={settings.shadowColor === 'transparent' ? '#000000' : settings.shadowColor} onChange={event => apply({ shadowColor: event.target.value })} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>
       <RangeField label="Размытие тени" value={settings.shadowBlur} min={0} max={80} step={1} onPointerDown={beginContinuous} onChange={value => apply({ shadowBlur: value }, false)} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>

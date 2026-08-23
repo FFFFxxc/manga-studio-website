@@ -85,7 +85,9 @@ const defaultTextSettings: TextSettings = {
   fontSize: 0.06,
   fill: '#000000',
   stroke: '',
-  strokeWidth: 2,
+  strokeWidth: 0,
+  fillStyle: { type: 'solid', color: '#000000' },
+  strokeStyle: { type: 'solid', color: '#000000' },
   shadowColor: 'transparent',
   shadowBlur: 0,
   shadowOffsetX: 0,
@@ -155,7 +157,7 @@ const defaultExportSettings: ExportSettings = {
 const defaultShapeSettings: ShapeSettings = {
   fill: '#ffffff',
   stroke: '#000000',
-  strokeWidth: 4,
+  strokeWidth: 0,
   opacity: 1,
   cornerRadius: 0,
   fillStyle: { type: 'solid', color: '#ffffff' },
@@ -192,7 +194,11 @@ function snap(doc: ImageDocument): HistorySnapshot {
     activeMaskId: doc.activeMaskId ?? null,
     selectedLayer: doc.selectedLayer ? { ...doc.selectedLayer } : null,
     watermarks: doc.watermarks.map(w => ({ ...w })),
-    texts: doc.texts.map(t => ({ ...t })),
+    texts: doc.texts.map(t => ({
+      ...t,
+      fillStyle: t.fillStyle ? clonePaintStyle(t.fillStyle) : undefined,
+      strokeStyle: t.strokeStyle ? clonePaintStyle(t.strokeStyle) : undefined,
+    })),
     translationMasks: (doc.translationMasks ?? []).map(mask => ({
       ...mask,
       points: mask.points ? [...mask.points] : undefined,
@@ -1182,23 +1188,25 @@ export const useStore = create<AppState>((set, get) => ({
     const documents = [...state.documents];
     const current = documents[state.activeDocIndex];
     const source = (current.translationMasks ?? []).find(mask => mask.id === id);
-    if (!source || source.locked) return {};
+    if (!source) return {};
+    const allowedUpdates = filterLockedGeometryUpdates(source.locked, updates);
+    if (Object.keys(allowedUpdates).length === 0) return {};
     const doc = options?.history === false ? { ...current, hasChanges: true } : withHistory(current);
-    const x = Number.isFinite(updates.x) ? Math.max(-1, Math.min(2, updates.x!)) : source.x;
-    const y = Number.isFinite(updates.y) ? Math.max(-1, Math.min(2, updates.y!)) : source.y;
+    const x = Number.isFinite(allowedUpdates.x) ? Math.max(-1, Math.min(2, allowedUpdates.x!)) : source.x;
+    const y = Number.isFinite(allowedUpdates.y) ? Math.max(-1, Math.min(2, allowedUpdates.y!)) : source.y;
     const next = {
       ...source,
-      ...updates,
+      ...allowedUpdates,
       x,
       y,
-      width: Math.max(0.002, Math.min(2, updates.width ?? source.width)),
-      height: Math.max(0.002, Math.min(2, updates.height ?? source.height)),
-      opacity: Math.max(0, Math.min(1, updates.opacity ?? source.opacity)),
-      feather: Math.max(0, Math.min(100, updates.feather ?? source.feather)),
-      padding: Math.max(0, Math.min(0.5, updates.padding ?? source.padding)),
+      width: Math.max(0.002, Math.min(2, allowedUpdates.width ?? source.width)),
+      height: Math.max(0.002, Math.min(2, allowedUpdates.height ?? source.height)),
+      opacity: Math.max(0, Math.min(1, allowedUpdates.opacity ?? source.opacity)),
+      feather: Math.max(0, Math.min(100, allowedUpdates.feather ?? source.feather)),
+      padding: Math.max(0, Math.min(0.5, allowedUpdates.padding ?? source.padding)),
     };
     let texts = doc.texts;
-    if (options?.moveGroup && source.groupId && (updates.x !== undefined || updates.y !== undefined)) {
+    if (options?.moveGroup && source.groupId && (allowedUpdates.x !== undefined || allowedUpdates.y !== undefined)) {
       const dx = x - source.x;
       const dy = y - source.y;
       texts = texts.map(text => text.groupId === source.groupId ? { ...text, x: text.x + dx, y: text.y + dy } : text);
@@ -1442,7 +1450,13 @@ export const useStore = create<AppState>((set, get) => ({
     return {
       foregroundColor: normalized,
       cleanupSettings: { ...state.cleanupSettings, brushColor: normalized },
-      textSettings: { ...state.textSettings, fill: normalized },
+      textSettings: {
+        ...state.textSettings,
+        fill: normalized,
+        fillStyle: state.textSettings.fillStyle.type === 'solid'
+          ? { type: 'solid', color: normalized }
+          : state.textSettings.fillStyle,
+      },
     };
   }),
   updateCloneStampSettings: (u) => set(s => ({ cloneStampSettings: { ...s.cloneStampSettings, ...u } })),

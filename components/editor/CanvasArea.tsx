@@ -18,6 +18,7 @@ import { copySelectionFragment, pasteFragmentAsLayer, shouldPasteFragment } from
 import { BubbleNode } from './BubbleNode';
 import { InlineTextEditor } from './InlineTextEditor';
 import { drawBrushStroke } from '@/utils/brushRaster';
+import { clonePaintStyle } from '@/utils/objectPaint';
 import { drawPerspectiveImage, isValidPerspectiveQuad } from '@/utils/perspective';
 import {
   getCurvedArrowCurveFromHandle,
@@ -46,6 +47,7 @@ import {
 } from '@/utils/pageImportPreference';
 import { toKonvaAdjustmentValues } from '@/utils/konvaAdjustments';
 import { toast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 import { useEditorUiStore } from '@/store/useEditorUiStore';
 import {
   createRasterEffectSession,
@@ -201,7 +203,7 @@ type RasterLayerRef = { id: string; type: 'base' | 'ai' };
  * Wraps a raster image with its non-destructive transform + crop and, when
  * selected with the select tool and unlocked, makes it draggable/transformable.
  */
-export function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, width, height, opacity, placement, adjustments, interactive, isSelected, onSelect, onContextMenu, onBeforeChange, onChange, layerRef }: {
+export function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevision, width, height, opacity, placement, adjustments, interactive, locked = false, isSelected, onSelect, onContextMenu, onBeforeChange, onChange, layerRef }: {
   nodeName: string;
   image: CanvasImageSource;
   /** Stable source URL/id and the content revision used for perspective preview caching. */
@@ -213,6 +215,7 @@ export function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevis
   placement: RasterNodePlacement;
   adjustments?: BaseLayerAdjustments;
   interactive: boolean;
+  locked?: boolean;
   isSelected: boolean;
   onSelect: () => void;
   onContextMenu: (e: Konva.KonvaEventObject<PointerEvent>) => void;
@@ -227,7 +230,7 @@ export function PlacedRasterImage({ nodeName, image, sourceIdentity, sourceRevis
   const imageRef = useRef<Konva.Image>(null);
   const [perspectiveCanvas, setPerspectiveCanvas] = useState<HTMLCanvasElement | null>(null);
   const renderedSourceRef = useRef<{ key: string; image: CanvasImageSource } | null>(null);
-  const draggable = interactive && isSelected;
+  const draggable = interactive && isSelected && !locked;
 
   useEffect(() => {
     if (draggable && trRef.current && groupRef.current) {
@@ -427,7 +430,8 @@ function RasterLayerNode({ layer, width, height, interactive, isSelected, onSele
       opacity={layer.opacity}
       placement={layer}
       adjustments={adjustments}
-      interactive={interactive && layer.locked !== true}
+      interactive={interactive}
+      locked={layer.locked === true}
       isSelected={isSelected}
       onSelect={onSelect}
       onContextMenu={onContextMenu}
@@ -482,7 +486,8 @@ function BaseLayerNode({ doc, width, height, interactive, isSelected, onSelect, 
       opacity={state?.opacity ?? 1}
       placement={state ?? {}}
       adjustments={adjustments}
-      interactive={interactive && state?.locked === false}
+      interactive={interactive}
+      locked={state?.locked !== false}
       isSelected={isSelected}
       onSelect={onSelect}
       onContextMenu={onContextMenu}
@@ -1304,7 +1309,48 @@ export function CanvasArea() {
   const colorSampleTokenRef = useRef(0);
   const [temporaryEyedropper, setTemporaryEyedropper] = useState(false);
   const checkerPattern = useRef<HTMLCanvasElement | null>(null);
+  const offeredUnlockLayerKeysRef = useRef(new Set<string>());
   if (typeof document !== 'undefined' && !checkerPattern.current) checkerPattern.current = makeCheckerPattern();
+
+  const selectOrOfferLayerUnlock = useCallback((options: {
+    documentId: string;
+    layerKey: string;
+    label: string;
+    locked: boolean;
+    select: () => void;
+    unlock: () => void;
+  }) => {
+    if (!options.locked) {
+      options.select();
+      return;
+    }
+    // Other tools keep their normal canvas gesture. The unlock offer belongs
+    // to the Select tool, where clicking a layer is unambiguously intentional.
+    if (activeTool !== 'select') return;
+
+    const offerKey = `${options.documentId}:${options.layerKey}`;
+    if (offeredUnlockLayerKeysRef.current.has(offerKey)) return;
+    // Record before opening the toast: dismissing it must not make the same
+    // prompt appear again on the next click.
+    offeredUnlockLayerKeysRef.current.add(offerKey);
+    toast({
+      title: 'Слой заблокирован',
+      description: `«${options.label}» нельзя перемещать или изменять. Снять замок? Подсказка для этого слоя показывается один раз.`,
+      action: (
+        <ToastAction
+          altText="Снять замок со слоя"
+          onClick={() => {
+            const state = useStore.getState();
+            if (state.documents[state.activeDocIndex]?.id !== options.documentId) return;
+            options.unlock();
+            options.select();
+          }}
+        >
+          Снять замок
+        </ToastAction>
+      ),
+    });
+  }, [activeTool]);
 
   // Auto-hide the coverage info chip
   useEffect(() => {
@@ -2218,6 +2264,8 @@ export function CanvasArea() {
       fill: textSettings.fill,
       stroke: textSettings.stroke,
       strokeWidth: textSettings.strokeWidth,
+      fillStyle: clonePaintStyle(textSettings.fillStyle),
+      strokeStyle: clonePaintStyle(textSettings.strokeStyle),
       shadowColor: textSettings.shadowColor,
       shadowBlur: textSettings.shadowBlur,
       shadowOffsetX: textSettings.shadowOffsetX,
@@ -3379,7 +3427,17 @@ export function CanvasArea() {
                     height={imgH}
                     interactive={activeTool === 'select'}
                     isSelected={activeDoc.selectedLayer?.type === 'base'}
-                    onSelect={() => { selectLayer({ id: activeDoc.baseLayer?.id ?? `base-${activeDoc.id}`, type: 'base' }); }}
+                    onSelect={() => {
+                      const layer = { id: activeDoc.baseLayer?.id ?? `base-${activeDoc.id}`, type: 'base' as const };
+                      selectOrOfferLayerUnlock({
+                        documentId: activeDoc.id,
+                        layerKey: `base:${layer.id}`,
+                        label: 'Фоновый слой',
+                        locked: activeDoc.baseLayer?.locked !== false,
+                        select: () => selectLayer(layer),
+                        unlock: () => useStore.getState().updateBaseLayer({ locked: false }),
+                      });
+                    }}
                     onContextMenu={e => {
                       e.evt.preventDefault();
                       e.cancelBubble = true;
@@ -3412,7 +3470,17 @@ export function CanvasArea() {
                     height={imgH}
                     interactive={activeTool === 'select'}
                     isSelected={activeDoc.selectedLayer?.type === 'ai' && activeDoc.selectedLayer.id === layer.id}
-                    onSelect={() => selectLayer({ id: layer.id, type: 'ai' })}
+                    onSelect={() => {
+                      const layerRef = { id: layer.id, type: 'ai' as const };
+                      selectOrOfferLayerUnlock({
+                        documentId: activeDoc.id,
+                        layerKey: `ai:${layer.id}`,
+                        label: layer.name || 'Растровый слой',
+                        locked: layer.locked === true,
+                        select: () => selectLayer(layerRef),
+                        unlock: () => useStore.getState().updateAiLayer(layer.id, { locked: false }),
+                      });
+                    }}
                     onContextMenu={e => {
                       e.evt.preventDefault();
                       e.cancelBubble = true;
@@ -3446,7 +3514,18 @@ export function CanvasArea() {
                     docHeight={activeDoc.height}
                     previewScale={previewScale}
                     isSelected={selectedObject?.id === wm.id}
-                    onSelect={() => setSelectedObject({ id: wm.id, type: 'watermark' })}
+                    onSelect={() => selectOrOfferLayerUnlock({
+                      documentId: activeDoc.id,
+                      layerKey: `watermark:${wm.id}`,
+                      label: 'Водяной знак',
+                      locked: wm.locked === true,
+                      select: () => setSelectedObject({ id: wm.id, type: 'watermark' }),
+                      unlock: () => {
+                        const state = useStore.getState();
+                        state.pushHistory();
+                        state.updateWatermark(wm.id, { locked: false });
+                      },
+                    })}
                     onChange={updates => updateWatermark(wm.id, updates)}
                     onBeforeChange={pushHistory}
                   />
@@ -3464,7 +3543,14 @@ export function CanvasArea() {
                     previewScale={previewScale}
                     isSelected={selectedObject?.id === txt.id}
                     isEditing={inlineEditingTextId === txt.id}
-                    onSelect={() => setSelectedObject({ id: txt.id, type: 'text' })}
+                    onSelect={() => selectOrOfferLayerUnlock({
+                      documentId: activeDoc.id,
+                      layerKey: `text:${txt.id}`,
+                      label: 'Текст',
+                      locked: txt.locked === true,
+                      select: () => setSelectedObject({ id: txt.id, type: 'text' }),
+                      unlock: () => useStore.getState().updateText(txt.id, { locked: false }, { history: true }),
+                    })}
                     onChange={updates => updateText(txt.id, updates, { history: false, moveGroup: Boolean(txt.groupId) })}
                     onBeforeChange={pushHistory}
                     onContextMenu={e => {
@@ -3479,6 +3565,7 @@ export function CanvasArea() {
                       });
                     }}
                     onEditRequest={() => {
+                      if (txt.locked) return;
                       if (activeTool === 'lasso' || activeTool === 'polyLasso' || activeTool === 'rectSelect' || activeTool === 'wand') return;
                       setSelectedObject({ id: txt.id, type: 'text' });
                       setTextEditorOverflowing(false);
@@ -3500,7 +3587,14 @@ export function CanvasArea() {
                     docHeight={activeDoc.height}
                     previewScale={previewScale}
                     isSelected={selectedObject?.type === 'translationMask' && selectedObject.id === mask.id}
-                    onSelect={() => setSelectedObject({ id: mask.id, type: 'translationMask' })}
+                    onSelect={() => selectOrOfferLayerUnlock({
+                      documentId: activeDoc.id,
+                      layerKey: `translationMask:${mask.id}`,
+                      label: 'Маска перевода',
+                      locked: mask.locked === true,
+                      select: () => setSelectedObject({ id: mask.id, type: 'translationMask' }),
+                      unlock: () => useStore.getState().updateTranslationMask(mask.id, { locked: false }, { history: true }),
+                    })}
                     onBeforeChange={pushHistory}
                     onChange={(updates, moveGroup) => updateTranslationMask(mask.id, updates, { history: false, moveGroup })}
                     onContextMenu={event => {
@@ -3528,7 +3622,14 @@ export function CanvasArea() {
                     docHeight={activeDoc.height}
                     previewScale={previewScale}
                     isSelected={selectedObject?.id === shape.id}
-                    onSelect={() => setSelectedObject({ id: shape.id, type: 'shape' })}
+                    onSelect={() => selectOrOfferLayerUnlock({
+                      documentId: activeDoc.id,
+                      layerKey: `shape:${shape.id}`,
+                      label: 'Фигура',
+                      locked: shape.locked === true,
+                      select: () => setSelectedObject({ id: shape.id, type: 'shape' }),
+                      unlock: () => useStore.getState().updateShape(shape.id, { locked: false }, { history: true }),
+                    })}
                     onChange={updates => updateShape(shape.id, updates)}
                     onBeforeChange={pushHistory}
                   />
@@ -3545,10 +3646,18 @@ export function CanvasArea() {
                     docHeight={activeDoc.height}
                     previewScale={previewScale}
                     isSelected={selectedObject?.id === bubble.id}
-                    onSelect={() => setSelectedObject({ id: bubble.id, type: 'bubble' })}
+                    onSelect={() => selectOrOfferLayerUnlock({
+                      documentId: activeDoc.id,
+                      layerKey: `bubble:${bubble.id}`,
+                      label: 'Бабл',
+                      locked: bubble.locked === true,
+                      select: () => setSelectedObject({ id: bubble.id, type: 'bubble' }),
+                      unlock: () => useStore.getState().updateBubble(bubble.id, { locked: false }, { history: true }),
+                    })}
                     onChange={updates => updateBubble(bubble.id, updates, { history: false })}
                     onBeforeChange={pushHistory}
                     onEditRequest={() => {
+                      if (bubble.locked) return;
                       setSelectedObject({ id: bubble.id, type: 'bubble' });
                       setLeftTab('bubble');
                     }}

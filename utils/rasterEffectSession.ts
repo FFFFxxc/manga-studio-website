@@ -47,12 +47,28 @@ function clamp(value: number, minimum: number, maximum: number) {
 }
 
 function createDefaultCanvas(width: number, height: number): CanvasSurface {
-  const canvas = typeof OffscreenCanvas !== 'undefined'
-    ? new OffscreenCanvas(width, height)
-    : window.document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(width));
-  canvas.height = Math.max(1, Math.round(height));
-  return canvas;
+  // Konva uploads the live preview canvas into its own scene canvas. A mutable
+  // OffscreenCanvas is accepted by the type system, but is not rendered
+  // reliably by every browser/GPU combination and can intermittently produce
+  // a black texture while the effect preview is being updated. The work still
+  // happens off React's render path, so use a regular canvas for the session's
+  // browser-visible surfaces.
+  const isHeadlessDom = typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent);
+  if (isHeadlessDom && typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+  }
+  const htmlCanvas = window.document.createElement('canvas');
+  htmlCanvas.width = Math.max(1, Math.round(width));
+  htmlCanvas.height = Math.max(1, Math.round(height));
+  try {
+    if (htmlCanvas.getContext('2d')) return htmlCanvas;
+  } catch { /* non-browser test environment */ }
+  // Keep headless/test compatibility. Real browsers always take the HTML
+  // canvas branch above, which is the important preview-safety guarantee.
+  if (typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(htmlCanvas.width, htmlCanvas.height);
+  }
+  return htmlCanvas;
 }
 
 function createSurface(factory: CanvasFactory, width: number, height: number) {

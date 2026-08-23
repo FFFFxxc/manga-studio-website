@@ -101,42 +101,70 @@ function renderBlur(source: HTMLCanvasElement, bounds: RasterEffectBounds, radiu
 function renderPixelate(
   source: HTMLCanvasElement,
   sourceBounds: RasterEffectBounds,
-  bounds: RasterEffectBounds,
   cellSize: number,
 ) {
   const cell = Math.max(1, Math.round(finiteOr(cellSize, 1)));
-  const alignedBounds = pixelateBounds(bounds, cell, source.width, source.height);
-  const alignedEffect = createCanvas(alignedBounds.width, alignedBounds.height);
-  const alignedContext = context2d(alignedEffect);
-  alignedContext.imageSmoothingEnabled = false;
-  const sample = createCanvas(1, 1);
-  for (let y = alignedBounds.y; y < alignedBounds.y + alignedBounds.height; y += cell) {
-    const cellHeight = Math.min(cell, source.height - y);
-    for (let x = alignedBounds.x; x < alignedBounds.x + alignedBounds.width; x += cell) {
-      const cellWidth = Math.min(cell, source.width - x);
-      sample.width = 1;
-      sample.height = 1;
-      const sampleContext = context2d(sample);
-      sampleContext.imageSmoothingEnabled = false;
-      sampleContext.drawImage(source, x, y, cellWidth, cellHeight, 0, 0, 1, 1);
-      alignedContext.drawImage(sample, 0, 0, 1, 1, x - alignedBounds.x, y - alignedBounds.y, cellWidth, cellHeight);
+  const alignedBounds = pixelateBounds(sourceBounds, cell, source.width, source.height);
+  const sourcePixels = context2d(source, true).getImageData(
+    alignedBounds.x,
+    alignedBounds.y,
+    alignedBounds.width,
+    alignedBounds.height,
+  );
+  const output = createCanvas(sourceBounds.width, sourceBounds.height);
+  const outputContext = context2d(output, true);
+  outputContext.imageSmoothingEnabled = false;
+  const result = outputContext.createImageData(output.width, output.height);
+  const alignedRight = alignedBounds.x + alignedBounds.width;
+  const alignedBottom = alignedBounds.y + alignedBounds.height;
+
+  // Average each cell directly from ImageData. The previous implementation
+  // resized a shared 1x1 canvas for every cell, repeatedly discarding its GPU
+  // backing store and context. A single CPU pass is both deterministic and
+  // avoids the intermittent black-frame failure seen on large pages.
+  for (let cellY = alignedBounds.y; cellY < alignedBottom; cellY += cell) {
+    const cellBottom = Math.min(cellY + cell, alignedBottom);
+    for (let cellX = alignedBounds.x; cellX < alignedRight; cellX += cell) {
+      const cellRight = Math.min(cellX + cell, alignedRight);
+      let alpha = 0;
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      let count = 0;
+      for (let y = cellY; y < cellBottom; y += 1) {
+        for (let x = cellX; x < cellRight; x += 1) {
+          const sourceIndex = (
+            (y - alignedBounds.y) * alignedBounds.width
+            + x - alignedBounds.x
+          ) * 4;
+          const pixelAlpha = sourcePixels.data[sourceIndex + 3];
+          red += sourcePixels.data[sourceIndex] * pixelAlpha;
+          green += sourcePixels.data[sourceIndex + 1] * pixelAlpha;
+          blue += sourcePixels.data[sourceIndex + 2] * pixelAlpha;
+          alpha += pixelAlpha;
+          count += 1;
+        }
+      }
+      const averageAlpha = count > 0 ? alpha / count : 0;
+      const averageRed = alpha > 0 ? red / alpha : 0;
+      const averageGreen = alpha > 0 ? green / alpha : 0;
+      const averageBlue = alpha > 0 ? blue / alpha : 0;
+      const paintLeft = Math.max(cellX, sourceBounds.x);
+      const paintTop = Math.max(cellY, sourceBounds.y);
+      const paintRight = Math.min(cellRight, sourceBounds.x + sourceBounds.width);
+      const paintBottom = Math.min(cellBottom, sourceBounds.y + sourceBounds.height);
+      for (let y = paintTop; y < paintBottom; y += 1) {
+        for (let x = paintLeft; x < paintRight; x += 1) {
+          const targetIndex = ((y - sourceBounds.y) * output.width + x - sourceBounds.x) * 4;
+          result.data[targetIndex] = averageRed;
+          result.data[targetIndex + 1] = averageGreen;
+          result.data[targetIndex + 2] = averageBlue;
+          result.data[targetIndex + 3] = averageAlpha;
+        }
+      }
     }
   }
-
-  const output = createCanvas(sourceBounds.width, sourceBounds.height);
-  const outputContext = context2d(output);
-  outputContext.imageSmoothingEnabled = false;
-  outputContext.drawImage(
-    alignedEffect,
-    sourceBounds.x - alignedBounds.x,
-    sourceBounds.y - alignedBounds.y,
-    sourceBounds.width,
-    sourceBounds.height,
-    0,
-    0,
-    output.width,
-    output.height,
-  );
+  outputContext.putImageData(result, 0, 0);
   return output;
 }
 
@@ -298,7 +326,7 @@ export function renderRasterEffect(
 
   let effected: HTMLCanvasElement;
   if (mode === 'blur') effected = renderBlur(source, sourceBounds, parameters.radius);
-  else if (mode === 'pixelate') effected = renderPixelate(source, sourceBounds, sourceBounds, parameters.cellSize);
+  else if (mode === 'pixelate') effected = renderPixelate(source, sourceBounds, parameters.cellSize);
   else if (mode === 'noise') effected = renderNoise(sourcePatch, sourceBounds, parameters);
   else effected = renderSharpen(source, sourceBounds, parameters.radius);
 

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import type { TextObject, ViewportState } from '@/types';
 import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
+import { normalizePaintStyle, paintToCss } from '@/utils/objectPaint';
 
 interface Props {
   textObj: TextObject;
@@ -43,11 +44,27 @@ export function InlineTextEditor({
   const isParagraph = textObj.textMode === 'paragraph';
   const scaledHeight = (textObj.height ?? 0) * docHeight * viewport.scale;
   const editorBox = getInlineTextEditorBox(scaledWidth, scaledHeight, isParagraph);
-  const scaledStroke = textObj.stroke && textObj.strokeWidth > 0
-    ? textObj.strokeWidth * viewport.scale
-    : 0;
   const scaledShadow = textObj.shadowBlur > 0
     ? textObj.shadowBlur * viewport.scale
+    : 0;
+  const fillPaint = normalizePaintStyle(textObj.fillStyle, textObj.fill || '#000000');
+  const hasGradientFill = fillPaint.type !== 'solid';
+  const fillCss = paintToCss(fillPaint, {
+    x: 0,
+    y: 0,
+    width: scaledWidth,
+    height: editorBox.height ?? scaledFontSize * textObj.lineHeight,
+  }, textObj.fill);
+  const strokePaint = normalizePaintStyle(
+    textObj.strokeStyle,
+    textObj.stroke === '' ? 'transparent' : textObj.stroke || '#000000',
+  );
+  const strokeColor = strokePaint.type === 'solid'
+    ? strokePaint.color
+    : strokePaint.stops[0]?.color ?? textObj.stroke;
+  const hasVisibleStroke = strokePaint.type !== 'solid' || strokePaint.color !== 'transparent';
+  const scaledStroke = hasVisibleStroke && textObj.strokeWidth > 0
+    ? textObj.strokeWidth * viewport.scale
     : 0;
 
   function measureOverflow() {
@@ -141,12 +158,16 @@ export function InlineTextEditor({
         minHeight: isParagraph ? undefined : scaledFontSize * textObj.lineHeight,
         fontSize: scaledFontSize,
         fontFamily: textObj.fontFamily,
-        color: textObj.fill,
+        color: hasGradientFill ? 'transparent' : fillCss,
         lineHeight: textObj.lineHeight,
         textAlign: textObj.align as React.CSSProperties['textAlign'],
         // Transparent editor — the text is the only thing you see,
         // exactly where it will be rendered. A thin frame marks the bounds.
-        background: 'transparent',
+        backgroundColor: 'transparent',
+        backgroundImage: hasGradientFill ? fillCss : undefined,
+        backgroundClip: hasGradientFill ? 'text' : undefined,
+        WebkitBackgroundClip: hasGradientFill ? 'text' : undefined,
+        WebkitTextFillColor: hasGradientFill ? 'transparent' : undefined,
         border: 'none',
         outline: '1px solid var(--accent)',
         outlineOffset: 3,
@@ -163,7 +184,7 @@ export function InlineTextEditor({
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
         // Mirror Konva node visuals so editing is true WYSIWYG
-        WebkitTextStroke: scaledStroke > 0 ? `${scaledStroke}px ${textObj.stroke}` : undefined,
+        WebkitTextStroke: scaledStroke > 0 ? `${scaledStroke}px ${strokeColor}` : undefined,
         textShadow: scaledShadow > 0 ? `0 0 ${scaledShadow}px ${textObj.shadowColor}` : undefined,
         transform: `rotate(${textObj.rotation}deg) scale(${textObj.scaleX}, ${textObj.scaleY})`,
         transformOrigin: 'left top',

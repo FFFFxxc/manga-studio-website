@@ -32,17 +32,28 @@ describe('TextPanel color commit', () => {
     });
   });
 
-  it('keeps picker movement local and commits selected/default color once', async () => {
+  it('applies solid text paint with one history entry for the whole picker gesture', async () => {
     render(<TextPanel />);
     const input = screen.getByLabelText('Цвет текста');
 
-    fireEvent.input(input, { target: { value: '#ff0000' } });
-    expect(useStore.getState().documents[0].texts[0].fill).toBe('#000000');
-
+    fireEvent.pointerDown(input);
     fireEvent.change(input, { target: { value: '#ff0000' } });
-    await waitFor(() => expect(useStore.getState().documents[0].texts[0].fill).toBe('#ff0000'));
-    expect(useStore.getState().textSettings.fill).toBe('#ff0000');
-    expect(useStore.getState().recentColors[0]).toBe('#ff0000');
+    fireEvent.change(input, { target: { value: '#00ff00' } });
+    await waitFor(() => expect(useStore.getState().documents[0].texts[0].fill).toBe('#00ff00'));
+    expect(useStore.getState().documents[0].texts[0].fillStyle).toEqual({ type: 'solid', color: '#00ff00' });
+    expect(useStore.getState().textSettings.fill).toBe('#00ff00');
+    expect(useStore.getState().recentColors[0]).toBe('#00ff00');
+    expect(useStore.getState().documents[0].past).toHaveLength(1);
+  });
+
+  it('offers a gradient fill for selected text without enabling its outline', () => {
+    render(<TextPanel />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Линейный' })[0]);
+
+    const updated = useStore.getState().documents[0].texts[0];
+    expect(updated.fillStyle?.type).toBe('linear');
+    expect(updated.strokeWidth).toBe(0);
     expect(useStore.getState().documents[0].past).toHaveLength(1);
   });
 });

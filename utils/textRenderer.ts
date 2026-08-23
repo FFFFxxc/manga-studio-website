@@ -1,6 +1,7 @@
 import Konva from 'konva';
 import type { TextConfig } from 'konva/lib/shapes/Text';
 import type { ExportSettings, TextObject } from '@/types';
+import { normalizePaintStyle, toKonvaPaintProps } from '@/utils/objectPaint';
 
 export const PARAGRAPH_TEXT_TRANSFORM_ANCHORS = [
   'top-left', 'top-center', 'top-right',
@@ -68,7 +69,7 @@ export function createTextNodeConfig(
     fontSize: text.fontSize * height,
     fill: text.fill,
     stroke: text.stroke || undefined,
-    strokeWidth: text.stroke ? text.strokeWidth * safeScale : 0,
+    strokeWidth: text.strokeWidth * safeScale,
     shadowColor: text.shadowBlur > 0 ? text.shadowColor : undefined,
     shadowBlur: text.shadowBlur * safeScale,
     shadowOffsetX: (text.shadowOffsetX ?? 0) * safeScale,
@@ -85,6 +86,60 @@ export function createTextNodeConfig(
   };
   if (text.textMode === 'paragraph' && Number.isFinite(text.height) && text.height! > 0) {
     config.height = text.height! * height;
+  }
+  const localWidth = Number(config.width) || 1;
+  let localHeight = Number(config.height) || 0;
+  if (localHeight <= 0) {
+    // Measure the same Konva wrapping that the real node will use. This keeps
+    // a vertical gradient spread over every wrapped line instead of reaching
+    // its final color after only the first line.
+    try {
+      const measurement = new Konva.Text({
+        ...config,
+        fill: text.fill || '#000000',
+        stroke: undefined,
+        strokeWidth: 0,
+        shadowBlur: 0,
+      });
+      localHeight = Math.max(1, measurement.height());
+      measurement.destroy();
+    } catch {
+      // Headless unit tests may provide only a minimal canvas context. Keep a
+      // deterministic approximation there; browsers use the exact branch.
+      const fontSize = Math.max(1, Number(config.fontSize) || 1);
+      const charactersPerLine = text.vertical
+        ? 1
+        : Math.max(1, Math.floor(localWidth / (fontSize * 0.58)));
+      const lineCount = text.vertical
+        ? Math.max(1, Array.from(text.text).length)
+        : text.text.split('\n').reduce(
+          (total, line) => total + Math.max(1, Math.ceil(Array.from(line).length / charactersPerLine)),
+          0,
+        );
+      localHeight = Math.max(1, fontSize * text.lineHeight * lineCount);
+    }
+  }
+  const paintBounds = { x: 0, y: 0, width: localWidth, height: localHeight };
+  Object.assign(
+    config,
+    toKonvaPaintProps(
+      normalizePaintStyle(text.fillStyle, text.fill || '#000000'),
+      paintBounds,
+      'fill',
+      text.fill || '#000000',
+    ),
+  );
+  const strokePaint = normalizePaintStyle(
+    text.strokeStyle,
+    text.stroke === '' ? 'transparent' : text.stroke || '#000000',
+  );
+  const hasVisibleStroke = text.strokeWidth > 0
+    && (strokePaint.type !== 'solid' || strokePaint.color !== 'transparent');
+  if (hasVisibleStroke) {
+    Object.assign(config, toKonvaPaintProps(strokePaint, paintBounds, 'stroke', text.stroke || '#000000'));
+  } else {
+    config.stroke = undefined;
+    config.strokeWidth = 0;
   }
   return config;
 }

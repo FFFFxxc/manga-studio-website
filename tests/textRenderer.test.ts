@@ -17,6 +17,7 @@ vi.mock('konva', () => ({
         konvaText.config = config;
       }
       destroy = konvaText.destroy;
+      height = vi.fn(() => 125);
       getClientRect = konvaText.getClientRect;
       toCanvas = konvaText.toCanvas;
     },
@@ -68,6 +69,37 @@ describe('shared text renderer', () => {
       verticalAlign: 'top',
       align: 'center',
     });
+  });
+
+  it('maps a text gradient into Konva so preview and export share the same paint', () => {
+    const config = createTextNodeConfig({
+      ...text,
+      fillStyle: {
+        type: 'linear',
+        angle: 0,
+        stops: [
+          { id: 'left', offset: 0, color: '#ff0000' },
+          { id: 'right', offset: 1, color: '#0000ff' },
+        ],
+      },
+    }, 2000, 1000, 1);
+
+    expect(config).toMatchObject({
+      fill: undefined,
+      fillPriority: 'linear-gradient',
+      fillLinearGradientStartPoint: { x: 0, y: 62.5 },
+      fillLinearGradientEndPoint: { x: 400, y: 62.5 },
+      fillLinearGradientColorStops: [0, '#ff0000', 1, '#0000ff'],
+    });
+  });
+
+  it('keeps the text outline disabled until its width is explicitly increased', () => {
+    expect(createTextNodeConfig({
+      ...text,
+      stroke: '#ff00ff',
+      strokeStyle: { type: 'solid', color: '#ff00ff' },
+      strokeWidth: 0,
+    }, 2000, 1000)).toMatchObject({ stroke: undefined, strokeWidth: 0 });
   });
 
   it('uses the preview wrapping config unchanged for export', () => {

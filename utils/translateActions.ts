@@ -10,6 +10,7 @@ import {
 } from './cleanupRaster';
 import { aiCleanupMaskedArea, finishSelection, requireSelectionMask } from './layerActions';
 import { ocrTranslate, redrawRegion } from '@/lib/routerai/client';
+import { clonePaintStyle } from '@/utils/objectPaint';
 
 const TRANSLATE_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
 export const IMAGE_MODEL_MAX_DIMENSION = 768;
@@ -217,6 +218,8 @@ function createBubbleTextDraft(doc: ImageDocument, selection: SelectionBounds, t
     fill: textSettings.fill,
     stroke: textSettings.stroke,
     strokeWidth: textSettings.strokeWidth,
+    fillStyle: clonePaintStyle(textSettings.fillStyle),
+    strokeStyle: clonePaintStyle(textSettings.strokeStyle),
     shadowColor: textSettings.shadowColor,
     shadowBlur: textSettings.shadowBlur,
     lineHeight: textSettings.lineHeight,

@@ -216,6 +216,21 @@ describe('raster effect primitives', () => {
     expect(result.context.imageSmoothingEnabled).toBe(false);
   });
 
+  it('averages transparent cells without introducing black RGB fringes', () => {
+    const source = makeCanvas(2, 1, x => x === 0
+      ? [240, 30, 20, 255]
+      : [0, 0, 0, 0]);
+    const result = renderRasterEffect(
+      source as unknown as HTMLCanvasElement,
+      { x: 0, y: 0, width: 2, height: 1 },
+      'pixelate',
+      { ...parameters, cellSize: 2 },
+    ) as unknown as PixelCanvas;
+
+    expect(result.getPixel(0, 0)).toEqual([240, 30, 20, 255]);
+    expect(result.getPixel(1, 0)).toEqual([240, 30, 20, 0]);
+  });
+
   it('keeps partial pixelation aligned with the same layer-coordinate cells', () => {
     const source = makeCanvas(8, 4, (x, y) => [x * 29, y * 47, (x + y) * 17, 120 + x]);
     const full = renderRasterEffect(source as unknown as HTMLCanvasElement, { x: 0, y: 0, width: 8, height: 4 }, 'pixelate', parameters) as unknown as PixelCanvas;

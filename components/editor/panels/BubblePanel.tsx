@@ -101,7 +101,7 @@ export function createDefaultBubble(kind: BubbleKind, textColor = '#000000'): Bu
     },
     fill: '#ffffff',
     stroke: '#000000',
-    strokeWidth: 2,
+    strokeWidth: 0,
     fillStyle: { type: 'solid', color: '#ffffff' },
     strokeStyle: { type: 'solid', color: '#000000' },
     glow: { ...DEFAULT_GLOW },

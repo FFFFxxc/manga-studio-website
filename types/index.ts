@@ -42,6 +42,9 @@ export interface TextObject {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  /** Rich paints are optional so documents saved before gradient text remain valid. */
+  fillStyle?: PaintStyle;
+  strokeStyle?: PaintStyle;
   shadowColor: string;
   shadowBlur: number;
   shadowOffsetX?: number;
@@ -466,6 +469,8 @@ export interface TextSettings {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  fillStyle: PaintStyle;
+  strokeStyle: PaintStyle;
   shadowColor: string;
   shadowBlur: number;
   shadowOffsetX: number;
@@ -608,7 +613,7 @@ export const TEXT_PRESETS: Record<string, Partial<TextSettings>> = {
     fontFamily: 'Russo One',
     fill: '#ffffff',
     stroke: '#cc0000',
-    strokeWidth: 4,
+    strokeWidth: 0,
     shadowBlur: 0,
     fontSize: 0.09,
     align: 'center',
@@ -617,7 +622,7 @@ export const TEXT_PRESETS: Record<string, Partial<TextSettings>> = {
     fontFamily: 'Arial',
     fill: '#ffffff',
     stroke: '#000000',
-    strokeWidth: 3,
+    strokeWidth: 0,
     shadowBlur: 0,
     fontSize: 0.05,
     align: 'center',
