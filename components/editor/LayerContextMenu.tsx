@@ -9,6 +9,7 @@ import { ContextMenu } from './floating/ContextMenu';
 import { beginEditorOperation, useEditorUiStore } from '@/store/useEditorUiStore';
 import { buildBaseCanvas, buildRasterLayerCanvas, computeAlphaBBox, drawPlacedLayer } from '@/utils/cleanupRaster';
 import { affineBoundsToPerspective } from '@/utils/perspective';
+import { applyRasterEffectToLayer } from '@/utils/rasterEffects';
 
 export interface ContextMenuState {
   x: number;
@@ -125,7 +126,7 @@ export function LayerContextMenu({ menu, onClose }: { menu: ContextMenuState; on
     }
   };
 
-  const run = async (key: string, action: () => Promise<void> | void, keepOpen = false) => {
+  const run = async (key: string, action: () => Promise<unknown> | void, keepOpen = false) => {
     setBusy(key);
     try {
       await action();
@@ -165,6 +166,24 @@ export function LayerContextMenu({ menu, onClose }: { menu: ContextMenuState; on
       label: 'Дублировать',
       onClick: () => run('duplicate', () => { if (isBase) duplicateBaseLayer(); else duplicateAiLayer(menu.target.id); }),
     },
+    { kind: 'separator', key: 'sep-effects' },
+    {
+      kind: 'item', key: 'effect-blur', label: 'Размыть весь слой', disabled: locked || !visible,
+      onClick: () => run('effect-blur', () => applyRasterEffectToLayer(layerRef, 'blur')),
+    },
+    {
+      kind: 'item', key: 'effect-pixelate', label: 'Пикселизировать весь слой', disabled: locked || !visible,
+      onClick: () => run('effect-pixelate', () => applyRasterEffectToLayer(layerRef, 'pixelate')),
+    },
+    {
+      kind: 'item', key: 'effect-noise', label: 'Добавить шум на слой', disabled: locked || !visible,
+      onClick: () => run('effect-noise', () => applyRasterEffectToLayer(layerRef, 'noise')),
+    },
+    {
+      kind: 'item', key: 'effect-sharpen', label: 'Повысить резкость слоя', disabled: locked || !visible,
+      onClick: () => run('effect-sharpen', () => applyRasterEffectToLayer(layerRef, 'sharpen')),
+    },
+    { kind: 'separator', key: 'sep-after-effects' },
     {
       kind: 'item',
       key: 'remove-bg',

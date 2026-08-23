@@ -153,7 +153,12 @@ function targetKey(target: RasterTarget) {
   return `${target.type}:${target.id}`;
 }
 
-function resolveTarget(document: ImageDocument, target: RasterTarget, requireSelection = true) {
+function resolveTarget(
+  document: ImageDocument,
+  target: RasterTarget,
+  requireSelection = true,
+  requireIdentityPlacement = true,
+) {
   const selected = requireSelection ? selectedRasterTarget(document) : null;
   if (requireSelection && !selected) throw new Error('Выберите растровый слой.');
   if (target.type === 'base') {
@@ -161,7 +166,7 @@ function resolveTarget(document: ImageDocument, target: RasterTarget, requireSel
     if (selected && targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
     if (!document.baseLayer.visible) throw new Error('Слой скрыт. Сделайте слой видимым.');
     if (document.baseLayer.locked) throw new Error('Слой заблокирован. Снимите блокировку.');
-    assertIdentityPlacement(document.baseLayer);
+    if (requireIdentityPlacement) assertIdentityPlacement(document.baseLayer);
     return { target, layer: document.baseLayer } as const;
   }
   const layer = document.aiLayers.find(item => item.id === target.id);
@@ -169,7 +174,7 @@ function resolveTarget(document: ImageDocument, target: RasterTarget, requireSel
   if (selected && targetKey(selected) !== targetKey(target)) throw new Error('Активный слой изменился.');
   if (!layer.visible) throw new Error('Слой скрыт. Сделайте слой видимым.');
   if (layer.locked) throw new Error('Слой заблокирован. Снимите блокировку.');
-  assertIdentityPlacement(layer);
+  if (requireIdentityPlacement) assertIdentityPlacement(layer);
   return { target, layer } as const;
 }
 
@@ -322,8 +327,12 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   if (activeDocument.id !== options.documentId) throw new Error('Активная страница изменилась.');
 
   const target = requestedTarget(activeDocument, options.layer);
-  const resolved = resolveTarget(activeDocument, target);
   const settings = { ...options.settings };
+  // Whole-layer filters operate on the layer's local pixels, so affine/crop/
+  // perspective placement can remain non-destructive. Brush and selection
+  // masks stay in document space and still require identity placement.
+  const requireIdentityPlacement = settings.gesture !== 'area' || settings.applyTo !== 'layer';
+  const resolved = resolveTarget(activeDocument, target, true, requireIdentityPlacement);
   const previewScale = Number.isFinite(options.previewScale) && options.previewScale > 0 ? options.previewScale : 1;
   const factory = options.createCanvas ?? createDefaultCanvas;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x100000000)) >>> 0;
@@ -369,7 +378,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   // Selection may legitimately be cleared after pointerup (for example by
   // Escape), so subsequent identity/revision checks must validate the captured
   // target itself rather than the current UI selection.
-  resolveTarget(latestDocument, target, false);
+  resolveTarget(latestDocument, target, false, requireIdentityPlacement);
   if (sourceRevision(latestDocument, target) !== revision) {
     throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
   }
@@ -466,7 +475,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
         cancelled = true;
         throw new Error('Активная страница изменилась. Эффект отменён.');
       }
-      resolveTarget(currentDocument, target, false);
+      resolveTarget(currentDocument, target, false, requireIdentityPlacement);
       if (sourceRevision(currentDocument, target) !== revision) {
         cancelled = true;
         throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');
@@ -493,7 +502,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
           cancelled = true;
           throw new Error('Активная страница изменилась. Эффект отменён.');
         }
-        resolveTarget(commitDocument, target, false);
+        resolveTarget(commitDocument, target, false, requireIdentityPlacement);
         if (sourceRevision(commitDocument, target) !== revision) {
           cancelled = true;
           throw new Error('Содержимое или геометрия слоя изменились. Эффект отменён.');

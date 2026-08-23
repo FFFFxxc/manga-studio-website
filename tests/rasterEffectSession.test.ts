@@ -468,6 +468,34 @@ describe('raster effect stroke session', () => {
     expect(rasterMocks.buildRasterLayerCanvas).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { x: 0.1 },
+    {
+      perspective: {
+        topLeft: { x: 0.1, y: 0.1 },
+        topRight: { x: 0.9, y: 0.1 },
+        bottomRight: { x: 0.9, y: 0.9 },
+        bottomLeft: { x: 0.1, y: 0.9 },
+      },
+    },
+  ])('applies a whole-layer area effect without destroying placement: %o', async placement => {
+    useStore.setState({
+      documents: [documentWithDrawing({ aiLayers: [drawingLayer(placement)] })],
+      activeDocIndex: 0,
+    });
+    const before = useStore.getState().documents[0].aiLayers[0];
+    const session = await createRasterEffectSession(makeOptions({
+      settings: { ...settings, gesture: 'area', applyTo: 'layer' },
+    }));
+
+    await session.commit();
+
+    const after = useStore.getState().documents[0].aiLayers[0];
+    expect(after.x).toBe(before.x);
+    expect(after.perspective).toEqual(before.perspective);
+    expect(useStore.getState().documents[0].past).toHaveLength(1);
+  });
+
   it('rejects an empty selection before building source pixels or history', async () => {
     rasterMocks.buildCleanupMask.mockResolvedValueOnce({ canvas: createSurface(100, 80), isEmpty: true, blob: new Blob() });
 
