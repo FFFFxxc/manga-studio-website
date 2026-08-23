@@ -71,7 +71,7 @@ describe('perspective Canvas renderer', () => {
     expect(mesh.paths.slice(1).some(path => path.some(([x]) => x < 0 || x > 200))).toBe(true);
   });
 
-  it('replaces overlapping triangle samples instead of source-over accumulating alpha', () => {
+  it('fills later triangle samples behind existing pixels so anti-aliased edges cannot erase them', () => {
     const target = createRecordingContext();
     const mesh = createRecordingContext();
     const canvas = createRecordingCanvas(mesh.ctx);
@@ -82,7 +82,9 @@ describe('perspective Canvas renderer', () => {
       canvasFactory: () => canvas,
     });
 
-    expect(mesh.compositeWrites).toContain('copy');
+    expect(mesh.compositeWrites[0]).toBe('source-over');
+    expect(mesh.compositeWrites.slice(1).every(operation => operation === 'destination-over')).toBe(true);
+    expect(mesh.compositeWrites).not.toContain('copy');
     expect(target.compositeWrites).toEqual([]);
     expect(mesh.ctx.drawImage).toHaveBeenCalledTimes(8);
     expect(target.ctx.drawImage).toHaveBeenCalledOnce();
@@ -146,7 +148,7 @@ describe('perspective Canvas renderer', () => {
 
     drawPerspectiveImage(ctx, source, rectangle, 200, 100);
 
-    expect(renderPerspectiveWebgl).toHaveBeenCalledWith(source, rectangle, 200, 100);
+    expect(renderPerspectiveWebgl).toHaveBeenCalledWith(source, rectangle, 200, 100, undefined);
     expect(ctx.drawImage).toHaveBeenCalledOnce();
     expect(ctx.drawImage).toHaveBeenCalledWith(rendered, 20, 10, 160, 80);
   });
@@ -184,7 +186,7 @@ describe('perspective Canvas renderer', () => {
     expect(ctx.drawImage).toHaveBeenCalledOnce();
   });
 
-  it('keeps sourceBounds on the Canvas fallback so the selected source rect fills the quad', () => {
+  it('keeps sourceBounds on the seamless WebGL path using explicit texture and local sample rectangles', () => {
     const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
     const rendered = { width: 200, height: 100 } as HTMLCanvasElement;
     vi.mocked(renderPerspectiveWebgl).mockReturnValue({
@@ -192,19 +194,36 @@ describe('perspective Canvas renderer', () => {
       bounds: { x: 0, y: 0, width: 200, height: 100 },
     });
     const target = createRecordingContext();
-    const mesh = createRecordingContext();
-    const canvas = createRecordingCanvas(mesh.ctx);
 
     drawPerspectiveImage(target.ctx, source, rectangle, 200, 100, {
       sourceBounds: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
-      subdivisions: 2,
-      canvasFactory: () => canvas,
     });
 
-    expect(target.paths).toEqual([[[0, 0], [200, 0], [200, 100], [0, 100]]]);
-    expect(mesh.ctx.drawImage).toHaveBeenCalledTimes(8);
-    expect(vi.mocked(mesh.ctx.drawImage).mock.calls.every(([image]) => image === source)).toBe(true);
-    expect(target.ctx.drawImage).toHaveBeenCalledWith(canvas, 0, 0, 200, 100);
+    expect(renderPerspectiveWebgl).toHaveBeenCalledWith(source, rectangle, 200, 100, {
+      sourceRect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
+      sampleRect: { x: 0, y: 0, width: 1, height: 1 },
+    });
+    expect(target.paths).toEqual([]);
+    expect(target.ctx.drawImage).toHaveBeenCalledWith(rendered, 0, 0, 200, 100);
+  });
+
+  it('maps a document-space crop into the sourceBounds local WebGL sample rectangle', () => {
+    const source = { width: 200, height: 100 } as unknown as CanvasImageSource;
+    vi.mocked(renderPerspectiveWebgl).mockReturnValue({
+      canvas: { width: 200, height: 100 } as HTMLCanvasElement,
+      bounds: { x: 0, y: 0, width: 200, height: 100 },
+    });
+    const target = createRecordingContext();
+
+    drawPerspectiveImage(target.ctx, source, rectangle, 200, 100, {
+      sourceBounds: { x: 0.125, y: 0.125, width: 0.5, height: 0.5 },
+      crop: { x: 0.1875, y: 0.25, width: 0.25, height: 0.1875 },
+    });
+
+    expect(renderPerspectiveWebgl).toHaveBeenCalledWith(source, rectangle, 200, 100, {
+      sourceRect: { x: 0.125, y: 0.125, width: 0.5, height: 0.5 },
+      sampleRect: { x: 0.125, y: 0.25, width: 0.5, height: 0.375 },
+    });
   });
 
   // Mutation caught: ignoring crop whenever sourceBounds is present stretches

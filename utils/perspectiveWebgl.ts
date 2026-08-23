@@ -20,6 +20,10 @@ export interface PerspectiveWebglResult {
 export interface PerspectiveWebglOptions {
   canvasFactory?: () => HTMLCanvasElement;
   onContextLost?: () => void;
+  /** Normalized rectangle sampled from the uploaded source texture. */
+  sourceRect?: PixelRect;
+  /** Normalized local-quad rectangle that is allowed to produce pixels. */
+  sampleRect?: PixelRect;
 }
 
 interface RendererState {
@@ -33,6 +37,8 @@ interface RendererState {
   inverseHomographyLocation: WebGLUniformLocation | null;
   outputSizeLocation: WebGLUniformLocation | null;
   boundsLocation: WebGLUniformLocation | null;
+  sourceRectLocation: WebGLUniformLocation | null;
+  sampleRectLocation: WebGLUniformLocation | null;
   onContextLost?: () => void;
 }
 
@@ -50,13 +56,20 @@ uniform sampler2D u_source;
 uniform mat3 u_inverseHomography;
 uniform vec2 u_outputSize;
 uniform vec4 u_bounds;
+uniform vec4 u_sourceRect;
+uniform vec4 u_sampleRect;
 varying vec2 v_framebuffer;
 void main() {
   vec2 documentUv = vec2(v_framebuffer.x, 1.0 - v_framebuffer.y);
   vec2 documentPoint = u_bounds.xy + documentUv * u_bounds.zw;
   vec3 sourcePoint = u_inverseHomography * vec3(documentPoint, 1.0);
-  vec2 uv = sourcePoint.xy / sourcePoint.z;
-  if (sourcePoint.z <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
+  vec2 localUv = sourcePoint.xy / sourcePoint.z;
+  vec2 sampleMax = u_sampleRect.xy + u_sampleRect.zw;
+  if (sourcePoint.z <= 0.0
+    || any(lessThan(localUv, u_sampleRect.xy))
+    || any(greaterThan(localUv, sampleMax))) discard;
+  vec2 uv = u_sourceRect.xy + localUv * u_sourceRect.zw;
+  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
   gl_FragColor = texture2D(u_source, uv);
 }`;
 
@@ -176,6 +189,8 @@ function createRenderer(options: PerspectiveWebglOptions): RendererState | null 
       inverseHomographyLocation: gl.getUniformLocation(program, 'u_inverseHomography'),
       outputSizeLocation: gl.getUniformLocation(program, 'u_outputSize'),
       boundsLocation: gl.getUniformLocation(program, 'u_bounds'),
+      sourceRectLocation: gl.getUniformLocation(program, 'u_sourceRect'),
+      sampleRectLocation: gl.getUniformLocation(program, 'u_sampleRect'),
       onContextLost: options.onContextLost,
     };
     if (state.positionLocation < 0) throw new Error('Perspective vertex attribute is unavailable');
@@ -243,6 +258,22 @@ export function renderPerspectiveWebgl(
     gl.uniform1i(state.sourceLocation, 0);
     gl.uniform2f(state.outputSizeLocation, outputWidth, outputHeight);
     gl.uniform4f(state.boundsLocation, bounds.x, bounds.y, bounds.width, bounds.height);
+    const sourceRect = options.sourceRect ?? { x: 0, y: 0, width: 1, height: 1 };
+    const sampleRect = options.sampleRect ?? { x: 0, y: 0, width: 1, height: 1 };
+    gl.uniform4f(
+      state.sourceRectLocation,
+      sourceRect.x,
+      sourceRect.y,
+      sourceRect.width,
+      sourceRect.height,
+    );
+    gl.uniform4f(
+      state.sampleRectLocation,
+      sampleRect.x,
+      sampleRect.y,
+      sampleRect.width,
+      sampleRect.height,
+    );
     gl.uniformMatrix3fv(state.inverseHomographyLocation, false, toColumnMajor(inverseHomography));
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     if (hasWebglFailure(gl)) return null;

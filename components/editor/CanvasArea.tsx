@@ -11,6 +11,8 @@ import { resolveVisualLayerOrder } from '@/utils/layerOrder';
 import { buildBaseCanvas, buildRasterLayerCanvas, createFloodMask, bakeStrokeIntoLayerSrc } from '@/utils/cleanupRaster';
 import { DropZone } from './DropZone';
 import { LayerContextMenu, type ContextMenuState } from './LayerContextMenu';
+import { ShapeContextMenu, type ShapeContextMenuState } from './ShapeContextMenu';
+import { WatermarkContextMenu, type WatermarkContextMenuState } from './WatermarkContextMenu';
 import { ToolOptionsBar } from './ToolOptionsBar';
 import { screenToImage } from '@/utils/coordinates';
 import { createLayerFromSelection, hasActiveSelection } from '@/utils/layerActions';
@@ -561,6 +563,7 @@ function WatermarkNode({
   onSelect,
   onChange,
   onBeforeChange,
+  onContextMenu,
 }: {
   wm: WatermarkObject;
   docWidth: number;
@@ -570,6 +573,7 @@ function WatermarkNode({
   onSelect: () => void;
   onChange: (updates: Partial<WatermarkObject>) => void;
   onBeforeChange: () => void;
+  onContextMenu: (event: Konva.KonvaEventObject<PointerEvent>) => void;
 }) {
   const nodeRef = useRef<Konva.Text | Konva.Image | null>(null);
   const trRef = useRef<Konva.Transformer>(null);
@@ -616,6 +620,7 @@ function WatermarkNode({
     draggable: !wm.locked,
     onClick: onSelect,
     onTap: onSelect,
+    onContextMenu,
     onDragStart: wm.locked ? undefined : onBeforeChange,
     onTransformStart: wm.locked ? undefined : onBeforeChange,
     onDragEnd: handleDragEnd,
@@ -922,6 +927,7 @@ function ShapeNode({
   onSelect,
   onChange,
   onBeforeChange,
+  onContextMenu,
 }: {
   shape: ShapeObject;
   docWidth: number;
@@ -931,6 +937,7 @@ function ShapeNode({
   onSelect: () => void;
   onChange: (updates: Partial<ShapeObject>) => void;
   onBeforeChange: () => void;
+  onContextMenu: (event: Konva.KonvaEventObject<PointerEvent>) => void;
 }) {
   const nodeRef = useRef<Konva.Group>(null);
   const trRef = useRef<Konva.Transformer>(null);
@@ -988,6 +995,7 @@ function ShapeNode({
     onTransformStart: shape.locked ? undefined : onBeforeChange,
     onDragEnd: handleDragEnd,
     onTransformEnd: handleTransformEnd,
+    onContextMenu,
   };
 
   const bounds = { x: -w / 2, y: -h / 2, width: w, height: h };
@@ -1316,6 +1324,8 @@ export function CanvasArea() {
   const [pendingImageImport, setPendingImageImport] = useState<PendingImageImport | null>(null);
   const [rememberImportChoice, setRememberImportChoice] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [shapeContextMenu, setShapeContextMenu] = useState<ShapeContextMenuState | null>(null);
+  const [watermarkContextMenu, setWatermarkContextMenu] = useState<WatermarkContextMenuState | null>(null);
   const [textDraftRect, setTextDraftRect] = useState<TextDraftRect | null>(null);
   const [pendingTextDraft, setPendingTextDraft] = useState<PendingTextDraft | null>(null);
   const [textEditorOverflowing, setTextEditorOverflowing] = useState(false);
@@ -3548,6 +3558,13 @@ export function CanvasArea() {
                     })}
                     onChange={updates => updateWatermark(wm.id, updates)}
                     onBeforeChange={pushHistory}
+                    onContextMenu={event => {
+                      event.evt.preventDefault();
+                      event.cancelBubble = true;
+                      setContextMenu(null);
+                      setShapeContextMenu(null);
+                      setWatermarkContextMenu({ x: event.evt.clientX, y: event.evt.clientY, watermarkId: wm.id });
+                    }}
                   />
                 );
               }
@@ -3652,6 +3669,12 @@ export function CanvasArea() {
                     })}
                     onChange={updates => updateShape(shape.id, updates)}
                     onBeforeChange={pushHistory}
+                    onContextMenu={event => {
+                      event.evt.preventDefault();
+                      event.cancelBubble = true;
+                      setContextMenu(null);
+                      setShapeContextMenu({ x: event.evt.clientX, y: event.evt.clientY, shapeId: shape.id });
+                    }}
                   />
                 );
               }
@@ -3771,6 +3794,37 @@ export function CanvasArea() {
         />
       )}
 
+      {/* Perspective confirmation bar. The blue grid is an editing guide and
+          must have an obvious way to disappear when the transform is done. */}
+      {activeOperation?.kind === 'perspective' && (
+        <div style={{
+          position: 'absolute', top: 48, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 42, display: 'flex', alignItems: 'center', gap: 8,
+          background: 'var(--bg-panel-raised)', border: '1px solid var(--border-default)',
+          borderRadius: 8, padding: '6px 10px', fontSize: 12, color: 'var(--text-primary)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+        }}>
+          <span>Перспектива — тяните углы</span>
+          <button
+            type="button"
+            aria-label="Применить перспективу"
+            onClick={() => useEditorUiStore.getState().commitActiveOperation()}
+            style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, border: 'none', background: 'var(--accent)', color: 'var(--bg-base)', cursor: 'pointer' }}
+          >
+            Применить
+          </button>
+          <button
+            type="button"
+            aria-label="Отменить перспективу"
+            onClick={() => useEditorUiStore.getState().cancelActiveOperation()}
+            style={{ padding: '4px 10px', fontSize: 12, borderRadius: 5, border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+          >
+            Отмена
+          </button>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Enter / Esc</span>
+        </div>
+      )}
+
       {/* Layer crop confirmation bar */}
       {layerCropTarget && activeTool === 'crop' && (
         <div style={{
@@ -3857,6 +3911,8 @@ export function CanvasArea() {
 
       {/* Layer context menu */}
       {contextMenu && <LayerContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
+      {shapeContextMenu && <ShapeContextMenu menu={shapeContextMenu} onClose={() => setShapeContextMenu(null)} />}
+      {watermarkContextMenu && <WatermarkContextMenu menu={watermarkContextMenu} onClose={() => setWatermarkContextMenu(null)} />}
 
       {/* Inline text editor overlay */}
       {inlineEditingTextId && activeDoc && (() => {

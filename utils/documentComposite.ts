@@ -4,6 +4,7 @@ import { resolveVisualLayerOrder } from '@/utils/layerOrder';
 import { drawBrushStroke } from '@/utils/brushRaster';
 import { drawBubbleToContext, drawShapeToContext } from '@/utils/drawVectorObject';
 import { initializeExportCanvas, renderTextObjectToContext } from '@/utils/textRenderer';
+import { drawWatermarkToContext } from '@/utils/watermarkRenderer';
 
 /**
  * Renders only document content. Konva transformers, selection outlines,
@@ -26,36 +27,6 @@ export async function renderDocumentToCanvas(
   );
   if (!ctx) throw new Error('Canvas недоступен.');
   initializeExportCanvas(ctx, doc.width, doc.height, format);
-
-  const drawWatermark = async (wm: (typeof doc.watermarks)[number]) => {
-    if (!wm.visible) return;
-    ctx.save();
-    ctx.globalAlpha = wm.opacity;
-    ctx.translate(wm.x * doc.width, wm.y * doc.height);
-    ctx.rotate((wm.rotation * Math.PI) / 180);
-    ctx.scale(wm.scaleX, wm.scaleY);
-    if (wm.type === 'text' && wm.text) {
-      const fontSize = (wm.fontSize ?? 0.06) * doc.height;
-      ctx.font = `${fontSize}px "${wm.fontFamily ?? 'Arial'}"`;
-      ctx.fillStyle = wm.fill ?? '#ffffff';
-      ctx.textBaseline = 'top';
-      ctx.fillText(wm.text, 0, 0);
-    } else if (wm.type === 'image' && wm.imageSrc) {
-      const image = new window.Image();
-      image.crossOrigin = 'anonymous';
-      await new Promise<void>(resolve => {
-        image.onload = () => resolve();
-        image.onerror = () => resolve();
-        image.src = wm.imageSrc!;
-      });
-      const width = (wm.imageWidth ?? 0.25) * doc.width;
-      const height = image.naturalWidth > 0
-        ? width * (image.naturalHeight / image.naturalWidth)
-        : (wm.imageHeight ?? 0.12) * doc.height;
-      ctx.drawImage(image, 0, 0, width, height);
-    }
-    ctx.restore();
-  };
 
   const drawTranslationMask = (mask: NonNullable<ImageDocument['translationMasks']>[number]) => {
     if (!mask.visible) return;
@@ -98,7 +69,7 @@ export async function renderDocumentToCanvas(
       }
     } else if (ref.type === 'watermark') {
       const watermark = doc.watermarks.find(item => item.id === ref.id);
-      if (watermark) await drawWatermark(watermark);
+      if (watermark) await drawWatermarkToContext(ctx, watermark, doc.width, doc.height);
     } else if (ref.type === 'text') {
       const text = doc.texts.find(item => item.id === ref.id);
       if (text) renderTextObjectToContext(ctx, text, doc.width, doc.height);

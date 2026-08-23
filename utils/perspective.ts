@@ -219,6 +219,42 @@ export function mapDocumentPointToLayerPoint(
 
 export type PerspectiveDrawOptions = PerspectiveCanvasOptions;
 
+function intersectNormalizedRects(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) {
+  const x = Math.max(left.x, right.x);
+  const y = Math.max(left.y, right.y);
+  const rightEdge = Math.min(left.x + left.width, right.x + right.width);
+  const bottomEdge = Math.min(left.y + left.height, right.y + right.height);
+  if (rightEdge <= x || bottomEdge <= y) return null;
+  return { x, y, width: rightEdge - x, height: bottomEdge - y };
+}
+
+/**
+ * sourceBounds means that the quad maps a subsection of a full-document
+ * texture, not the texture's complete 0..1 range. Keep that mapping in the
+ * WebGL shader so perspective previews never have to fall back to a visible
+ * triangle mesh merely because their source has transparent margins.
+ */
+export function getPerspectiveWebglSampling(options: PerspectiveDrawOptions) {
+  const sourceRect = options.sourceBounds ?? null;
+  if (!sourceRect) return null;
+  if (sourceRect.width <= 0 || sourceRect.height <= 0) return null;
+  const crop = options.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+  const sampledSource = intersectNormalizedRects(crop, sourceRect);
+  if (!sampledSource) return null;
+  return {
+    sourceRect,
+    sampleRect: {
+      x: (sampledSource.x - sourceRect.x) / sourceRect.width,
+      y: (sampledSource.y - sourceRect.y) / sourceRect.height,
+      width: sampledSource.width / sourceRect.width,
+      height: sampledSource.height / sourceRect.height,
+    },
+  };
+}
+
 function clipPerspectiveCrop(
   ctx: CanvasRenderingContext2D,
   quad: PerspectiveQuad,
@@ -252,14 +288,17 @@ export function drawPerspectiveImage(
   height: number,
   options: PerspectiveDrawOptions = {},
 ) {
-  const rendered = options.sourceBounds
+  const webglSampling = getPerspectiveWebglSampling(options);
+  const rendered = options.sourceBounds && !webglSampling
     ? null
-    : renderPerspectiveWebgl(source, quad, width, height);
+    : renderPerspectiveWebgl(source, quad, width, height, webglSampling ?? undefined);
   if (rendered) {
     const { bounds, canvas } = rendered;
     ctx.save();
     ctx.globalAlpha *= options.opacity ?? 1;
-    if (options.crop && !clipPerspectiveCrop(ctx, quad, width, height, options.crop)) {
+    // sourceBounds crops in original-document UV space and is enforced by the
+    // shader's sampleRect. The legacy clip helper accepts local-quad UV only.
+    if (!options.sourceBounds && options.crop && !clipPerspectiveCrop(ctx, quad, width, height, options.crop)) {
       ctx.restore();
       return;
     }

@@ -6,6 +6,8 @@ import { GripVertical } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import type { ImageDocument, LayerVisibility, BaseLayerAdjustments, ShapeKind } from '@/types';
 import { LayerContextMenu } from './LayerContextMenu';
+import { ShapeContextMenu, type ShapeContextMenuState } from './ShapeContextMenu';
+import { WatermarkContextMenu, type WatermarkContextMenuState } from './WatermarkContextMenu';
 import { resolveLayerOrder } from '@/utils/layerOrder';
 import { createDrawingLayer } from '@/utils/layerActions';
 import { loadImagesFromFiles } from '@/utils/imageUtils';
@@ -320,6 +322,8 @@ const { layerVisibility, toggleLayerVisibility, activeDocIndex, documents, selec
 })));
 const activeDoc = activeDocIndex >= 0 ? documents[activeDocIndex] : null;
 const [aiMenu, setAiMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+const [shapeMenu, setShapeMenu] = useState<ShapeContextMenuState | null>(null);
+const [watermarkMenu, setWatermarkMenu] = useState<WatermarkContextMenuState | null>(null);
 const [dragIndex, setDragIndex] = useState<number | null>(null);
 const [dropIndex, setDropIndex] = useState<number | null>(null);
 // Ref mirrors dragIndex so drop handlers read the current value even before re-render.
@@ -584,6 +588,13 @@ const LAYERS: { key: keyof LayerVisibility; label: string; icon: string }[] = [
                         isBatch={wm.isBatch}
                         locked={wm.locked === true}
                         onLock={() => { pushHistory(); updateWatermark(wm.id, { locked: wm.locked !== true }); }}
+                        onContextMenu={event => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setAiMenu(null);
+                          setShapeMenu(null);
+                          setWatermarkMenu({ x: event.clientX, y: event.clientY, watermarkId: wm.id });
+                        }}
                       />
                     </div>
                   </div>
@@ -654,6 +665,12 @@ const LAYERS: { key: keyof LayerVisibility; label: string; icon: string }[] = [
                         onDelete={() => deleteShape(shape.id)}
                         locked={shape.locked === true}
                         onLock={() => updateShape(shape.id, { locked: shape.locked !== true }, { history: true })}
+                        onContextMenu={event => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setAiMenu(null);
+                          setShapeMenu({ x: event.clientX, y: event.clientY, shapeId: shape.id });
+                        }}
                       />
                     </div>
                   </div>
@@ -685,6 +702,8 @@ const LAYERS: { key: keyof LayerVisibility; label: string; icon: string }[] = [
       )}
 
       {aiMenu && <LayerContextMenu menu={{ x: aiMenu.x, y: aiMenu.y, target: { id: aiMenu.id, type: 'ai' } }} onClose={() => setAiMenu(null)} />}
+      {shapeMenu && <ShapeContextMenu menu={shapeMenu} onClose={() => setShapeMenu(null)} />}
+      {watermarkMenu && <WatermarkContextMenu menu={watermarkMenu} onClose={() => setWatermarkMenu(null)} />}
     </div>
   );
 }
@@ -828,7 +847,7 @@ function LayerRow({ label, prefix, selected, visible, opacity, onSelect, onVisib
 }
 
 function ObjectRow({
-  label, prefix, isSelected, visible, onSelect, onDelete, isBatch, locked, onLock,
+  label, prefix, isSelected, visible, onSelect, onDelete, isBatch, locked, onLock, onContextMenu,
 }: {
   label: string;
   prefix: string;
@@ -839,10 +858,12 @@ function ObjectRow({
   isBatch?: boolean;
   locked?: boolean;
   onLock?: () => void;
+  onContextMenu?: (event: React.MouseEvent) => void;
 }) {
   return (
     <div
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       style={{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '4px 6px', borderRadius: 6, marginBottom: 2,

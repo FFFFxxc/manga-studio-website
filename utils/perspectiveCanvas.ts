@@ -47,6 +47,7 @@ function drawTriangle(
   src: [Point, Point, Point],
   dst: [Point, Point, Point],
   seamOverlapPx: number,
+  compositeOperation: GlobalCompositeOperation,
 ) {
   const [s0, s1, s2] = src;
   const [d0, d1, d2] = dst;
@@ -66,7 +67,11 @@ function drawTriangle(
   ctx.lineTo(clip[2].x, clip[2].y);
   ctx.closePath();
   ctx.clip();
-  ctx.globalCompositeOperation = 'copy';
+  // Anti-aliased clip edges must never replace an already opaque neighbour
+  // with a partially covered pixel. Draw the first triangle normally, then
+  // fill all remaining mesh gaps behind existing pixels. Opacity is still
+  // applied once when the completed surface is composited to the document.
+  ctx.globalCompositeOperation = compositeOperation;
   ctx.transform(a, b, c, d, e, f);
   ctx.drawImage(source, 0, 0);
   ctx.restore();
@@ -157,6 +162,7 @@ export function drawPerspectiveCanvas(
   const meshContext = canvas.getContext('2d');
   if (!meshContext) return;
   const localize = (point: Point) => ({ x: point.x - bounds.x, y: point.y - bounds.y });
+  let firstTriangle = true;
 
   for (let row = 0; row < subdivisions; row++) {
     const localV0 = row / subdivisions;
@@ -180,8 +186,23 @@ export function drawPerspectiveCanvas(
       const d10 = projectHomography(homography, { x: destinationU1, y: destinationV0 });
       const d11 = projectHomography(homography, { x: destinationU1, y: destinationV1 });
       const d01 = projectHomography(homography, { x: destinationU0, y: destinationV1 });
-      drawTriangle(meshContext, source, [s00, s10, s11], [localize(d00), localize(d10), localize(d11)], seamOverlapPx);
-      drawTriangle(meshContext, source, [s00, s11, s01], [localize(d00), localize(d11), localize(d01)], seamOverlapPx);
+      drawTriangle(
+        meshContext,
+        source,
+        [s00, s10, s11],
+        [localize(d00), localize(d10), localize(d11)],
+        seamOverlapPx,
+        firstTriangle ? 'source-over' : 'destination-over',
+      );
+      firstTriangle = false;
+      drawTriangle(
+        meshContext,
+        source,
+        [s00, s11, s01],
+        [localize(d00), localize(d11), localize(d01)],
+        seamOverlapPx,
+        'destination-over',
+      );
     }
   }
   ctx.save();

@@ -181,6 +181,22 @@ describe('perspective WebGL renderer', () => {
     ]);
   });
 
+  it('uploads sourceBounds and local crop rectangles for a seam-free partial-source draw', () => {
+    const harness = createWebglHarness();
+    renderPerspectiveWebgl({} as CanvasImageSource, rectangle, 100, 100, {
+      canvasFactory: () => harness.canvas,
+      sourceRect: { x: 0.2, y: 0.1, width: 0.6, height: 0.8 },
+      sampleRect: { x: 0.25, y: 0.125, width: 0.5, height: 0.75 },
+    });
+
+    expect(harness.gl.uniform4f).toHaveBeenCalledWith(
+      { name: 'u_sourceRect' }, 0.2, 0.1, 0.6, 0.8,
+    );
+    expect(harness.gl.uniform4f).toHaveBeenCalledWith(
+      { name: 'u_sampleRect' }, 0.25, 0.125, 0.5, 0.75,
+    );
+  });
+
   it('clears the singleton and notifies the caller when the context is lost', () => {
     const firstHarness = createWebglHarness();
     const secondHarness = createWebglHarness();
