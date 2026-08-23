@@ -10,6 +10,7 @@ import { useStore } from '@/store/useStore';
 import { drawBrushStroke } from '@/utils/brushRaster';
 import { buildBaseCanvas, buildCleanupMask, buildRasterLayerCanvas } from '@/utils/cleanupRaster';
 import { renderRasterEffect } from '@/utils/rasterEffectPrimitives';
+import { canvasToPersistentDataUrl, registerRuntimeRasterSource } from '@/utils/runtimeRasterSources';
 
 export interface PixelRect { x: number; y: number; width: number; height: number }
 
@@ -60,14 +61,10 @@ function createDefaultCanvas(width: number, height: number): CanvasSurface {
   const htmlCanvas = window.document.createElement('canvas');
   htmlCanvas.width = Math.max(1, Math.round(width));
   htmlCanvas.height = Math.max(1, Math.round(height));
-  try {
-    if (htmlCanvas.getContext('2d')) return htmlCanvas;
-  } catch { /* non-browser test environment */ }
-  // Keep headless/test compatibility. Real browsers always take the HTML
-  // canvas branch above, which is the important preview-safety guarantee.
-  if (typeof OffscreenCanvas !== 'undefined') {
-    return new OffscreenCanvas(htmlCanvas.width, htmlCanvas.height);
-  }
+  // Do not probe getContext here. Canvas attributes are fixed by the first
+  // successful context request; probing without willReadFrequently would make
+  // every later readback request inherit the slower default backing store.
+  // Real browsers can initialize the context lazily at the actual use site.
   return htmlCanvas;
 }
 
@@ -89,9 +86,15 @@ function context2d(canvas: CanvasSurface, willReadFrequently = false) {
   return context;
 }
 
-function copyCanvas(source: CanvasImageSource, width: number, height: number, factory: CanvasFactory) {
+function copyCanvas(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  factory: CanvasFactory,
+  willReadFrequently = false,
+) {
   const copy = createSurface(factory, width, height);
-  context2d(copy).drawImage(source, 0, 0, width, height);
+  context2d(copy, willReadFrequently).drawImage(source, 0, 0, width, height);
   return copy;
 }
 
@@ -303,25 +306,13 @@ function buildReplacementPatch(
   const patch = createSurface(factory, scaledBounds.width, scaledBounds.height);
   const patchContext = context2d(patch, true);
   const sourcePixels = sourcePatchContext.getImageData(0, 0, scaledBounds.width, scaledBounds.height);
-  const effectCanvas = copyCanvas(effected, scaledBounds.width, scaledBounds.height, factory);
+  const effectCanvas = copyCanvas(effected, scaledBounds.width, scaledBounds.height, factory, true);
   const effectPixels = context2d(effectCanvas, true).getImageData(0, 0, scaledBounds.width, scaledBounds.height);
   const maskPixels = maskContext.getImageData(0, 0, scaledBounds.width, scaledBounds.height);
   const replacement = patchContext.createImageData(scaledBounds.width, scaledBounds.height);
   replacement.data.set(blendEffectPixelData(sourcePixels.data, effectPixels.data, maskPixels.data));
   patchContext.putImageData(replacement, 0, 0);
   return { canvas: patch, bounds: scaledBounds, documentBounds };
-}
-
-async function canvasToDataUrl(canvas: CanvasSurface) {
-  const htmlCanvas = canvas as HTMLCanvasElement;
-  if (typeof htmlCanvas.toDataURL === 'function') return htmlCanvas.toDataURL('image/png');
-  const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/png' });
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error('Не удалось сохранить результат эффекта.'));
-    reader.readAsDataURL(blob);
-  });
 }
 
 export async function createRasterEffectSession(options: RasterEffectSessionOptions): Promise<RasterEffectSession> {
@@ -337,6 +328,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   const factory = options.createCanvas ?? createDefaultCanvas;
   const seed = (Date.now() ^ Math.floor(Math.random() * 0x100000000)) >>> 0;
   const revision = sourceRevision(activeDocument, target);
+  const sourceWillBeRead = settings.mode === 'pixelate' || settings.mode === 'sharpen';
 
   let mask = createSurface(factory, activeDocument.width, activeDocument.height);
   let dirtyBounds: PixelRect | null = null;
@@ -344,12 +336,12 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   if (settings.applyTo === 'selection') {
     const selection = await buildCleanupMask(activeDocument);
     if (selection.isEmpty) throw new Error('Сначала создайте выделение.');
-    mask = copyCanvas(selection.canvas, activeDocument.width, activeDocument.height, factory);
+    mask = copyCanvas(selection.canvas, activeDocument.width, activeDocument.height, factory, true);
     dirtyBounds = alphaBounds(mask);
     if (!dirtyBounds) throw new Error('Сначала создайте выделение.');
     pendingPreviewBounds = { ...dirtyBounds };
   } else if (settings.gesture === 'area') {
-    const context = context2d(mask);
+    const context = context2d(mask, true);
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, activeDocument.width, activeDocument.height);
     dirtyBounds = { x: 0, y: 0, width: activeDocument.width, height: activeDocument.height };
@@ -359,7 +351,15 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
   const builtSource = target.type === 'ai'
     ? await buildRasterLayerCanvas(resolved.layer as AiRasterLayer, activeDocument.width, activeDocument.height)
     : await buildBaseCanvas(activeDocument);
-  const source = copyCanvas(builtSource, activeDocument.width, activeDocument.height, factory);
+  // Pixelate and sharpen sample neighboring source pixels while the pointer
+  // moves. Blur/noise only draw from this surface and keep the faster default.
+  const source = copyCanvas(
+    builtSource,
+    activeDocument.width,
+    activeDocument.height,
+    factory,
+    sourceWillBeRead,
+  );
   const latestState = useStore.getState();
   const latestDocument = latestState.documents[latestState.activeDocIndex];
   if (!latestDocument || latestDocument.id !== activeDocument.id) {
@@ -388,7 +388,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
     if (bounds.width <= 0 || bounds.height <= 0) return null;
     const scaledSource = scale === 1
       ? source
-      : previewSource ?? (previewSource = copyCanvas(source, width, height, factory));
+      : previewSource ?? (previewSource = copyCanvas(source, width, height, factory, sourceWillBeRead));
     const effected = renderRasterEffect(
       scaledSource as HTMLCanvasElement,
       bounds,
@@ -420,7 +420,7 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
         mode: 'paint',
       };
       const next = drawBrushStroke(
-        context2d(mask) as CanvasRenderingContext2D,
+        context2d(mask, true) as CanvasRenderingContext2D,
         stroke,
         activeDocument.width,
         activeDocument.height,
@@ -481,8 +481,12 @@ export async function createRasterEffectSession(options: RasterEffectSessionOpti
           0, 0, rendered.bounds.width, rendered.bounds.height,
         );
         context2d(output).putImageData(replacement, rendered.bounds.x, rendered.bounds.y);
-        const src = await canvasToDataUrl(output);
+        const src = await canvasToPersistentDataUrl(output);
         if (cancelled) throw new Error('Операция отменена.');
+        // The store keeps the serializable URL for history/persistence, while
+        // the live editor reuses these exact pixels instead of constructing a
+        // new HTMLImageElement and decoding the PNG after every short stroke.
+        registerRuntimeRasterSource(src, output);
         const commitState = useStore.getState();
         const commitDocument = commitState.documents[commitState.activeDocIndex];
         if (!commitDocument || commitDocument.id !== activeDocument.id) {

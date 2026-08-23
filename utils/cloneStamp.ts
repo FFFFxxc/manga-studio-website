@@ -15,6 +15,7 @@ import {
   projectHomography,
 } from '@/utils/perspective';
 import type { PixelRect, RasterEffectPreview, RasterEffectSession, RasterEffectTarget } from '@/utils/rasterEffectSession';
+import { canvasToPersistentDataUrl, registerRuntimeRasterSource } from '@/utils/runtimeRasterSources';
 
 type RasterPlacement = Partial<LayerTransform> & {
   crop?: CropRect | null;
@@ -231,8 +232,14 @@ function resolveTarget(doc: ImageDocument, target: RasterEffectTarget) {
   return layer;
 }
 
-function canvasToDataUrl(canvas: HTMLCanvasElement) {
-  return canvas.toDataURL('image/png');
+function copyToReadbackCanvas(source: CanvasImageSource, width: number, height: number) {
+  const canvas = window.document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Canvas недоступен.');
+  context.drawImage(source, 0, 0, width, height);
+  return canvas;
 }
 
 export async function createCloneStampSession(options: CloneStampSessionOptions): Promise<RasterEffectSession> {
@@ -253,21 +260,25 @@ export async function createCloneStampSession(options: CloneStampSessionOptions)
   }
   const placement = resolveTarget(document, target) as RasterPlacement;
   const revision = targetRevision(document, target);
-  const original = target.type === 'base'
+  const builtOriginal = target.type === 'base'
     ? await buildBaseCanvas(document)
     : await buildRasterLayerCanvas(placement as AiRasterLayer, document.width, document.height);
+  // Clone stamping reads local source patches for every pointer frame. Copy
+  // once into a readback-optimized surface instead of triggering repeated GPU
+  // readback warnings from the draw-oriented compositor canvas.
+  const original = copyToReadbackCanvas(builtOriginal, document.width, document.height);
   const working = window.document.createElement('canvas');
   working.width = document.width;
   working.height = document.height;
-  working.getContext('2d')?.drawImage(original, 0, 0);
+  working.getContext('2d', { willReadFrequently: true })?.drawImage(original, 0, 0);
 
   const sample = options.settings.sample === 'all'
-    ? await renderDocumentToCanvas(document, 'png')
+    ? await renderDocumentToCanvas(document, 'png', { willReadFrequently: true })
     : (() => {
       const canvas = window.document.createElement('canvas');
       canvas.width = document.width;
       canvas.height = document.height;
-      const context = canvas.getContext('2d');
+      const context = canvas.getContext('2d', { willReadFrequently: true });
       if (!context) throw new Error('Canvas недоступен.');
       drawPlacedLayer(context, original, { ...placement, opacity: 1 }, document.width, document.height);
       return canvas;
@@ -289,7 +300,7 @@ export async function createCloneStampSession(options: CloneStampSessionOptions)
   const strokeMask = window.document.createElement('canvas');
   strokeMask.width = document.width;
   strokeMask.height = document.height;
-  const strokeContext = strokeMask.getContext('2d');
+  const strokeContext = strokeMask.getContext('2d', { willReadFrequently: true });
   if (!strokeContext) throw new Error('Canvas недоступен.');
 
   let lastPoint: [number, number] | null = null;
@@ -298,6 +309,12 @@ export async function createCloneStampSession(options: CloneStampSessionOptions)
   let cancelled = false;
   let committing = false;
   let committedId: string | null = null;
+  const previewScale = Number.isFinite(options.previewScale) && options.previewScale > 0 ? options.previewScale : 1;
+  const preview = window.document.createElement('canvas');
+  preview.width = Math.max(1, Math.round(document.width * previewScale));
+  preview.height = Math.max(1, Math.round(document.height * previewScale));
+  const previewContext = preview.getContext('2d');
+  if (!previewContext) throw new Error('Canvas недоступен.');
 
   return {
     append(points) {
@@ -347,22 +364,15 @@ export async function createCloneStampSession(options: CloneStampSessionOptions)
       if (cancelled || committing || committedId || !pendingPreviewBounds) return null;
       const bounds = pendingPreviewBounds;
       pendingPreviewBounds = null;
-      const scale = Number.isFinite(options.previewScale) && options.previewScale > 0 ? options.previewScale : 1;
-      const width = Math.max(1, Math.round(document.width * scale));
-      const height = Math.max(1, Math.round(document.height * scale));
-      const preview = window.document.createElement('canvas');
-      preview.width = width;
-      preview.height = height;
-      const context = preview.getContext('2d');
-      if (!context) throw new Error('Canvas недоступен.');
-      drawPlacedLayer(context, working, placement, width, height);
+      previewContext.clearRect(0, 0, preview.width, preview.height);
+      drawPlacedLayer(previewContext, working, placement, preview.width, preview.height);
       return {
         canvas: preview,
         bounds: {
-          x: Math.floor(bounds.x * scale),
-          y: Math.floor(bounds.y * scale),
-          width: Math.ceil(bounds.width * scale),
-          height: Math.ceil(bounds.height * scale),
+          x: Math.floor(bounds.x * previewScale),
+          y: Math.floor(bounds.y * previewScale),
+          width: Math.ceil(bounds.width * previewScale),
+          height: Math.ceil(bounds.height * previewScale),
         },
         target,
         opacity: 1,
@@ -379,7 +389,8 @@ export async function createCloneStampSession(options: CloneStampSessionOptions)
       if (!latestDocument || latestDocument.id !== document.id) throw new Error('Активная страница изменилась.');
       resolveTarget(latestDocument, target);
       if (targetRevision(latestDocument, target) !== revision) throw new Error('Содержимое или геометрия слоя изменились.');
-      const src = canvasToDataUrl(working);
+      const src = await canvasToPersistentDataUrl(working);
+      registerRuntimeRasterSource(src, working);
       if (target.type === 'base') {
         latest.commitBaseRasterEffect(src);
       } else {

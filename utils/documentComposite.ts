@@ -14,12 +14,16 @@ import { initializeExportCanvas, renderTextObjectToContext } from '@/utils/textR
 export async function renderDocumentToCanvas(
   doc: ImageDocument,
   format: 'png' | 'jpg' = 'png',
+  options?: { willReadFrequently?: boolean },
 ): Promise<HTMLCanvasElement> {
   try { await document.fonts.ready; } catch { /* font readiness is best-effort */ }
   const canvas = document.createElement('canvas');
   canvas.width = doc.width;
   canvas.height = doc.height;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext(
+    '2d',
+    options?.willReadFrequently ? { willReadFrequently: true } : undefined,
+  );
   if (!ctx) throw new Error('Canvas недоступен.');
   initializeExportCanvas(ctx, doc.width, doc.height, format);
 

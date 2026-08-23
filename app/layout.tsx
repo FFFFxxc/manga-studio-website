@@ -15,21 +15,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru" className="bg-[#191919]">
       <head>
-        {/* Дефолтный шрифт редактора (self-hosted) — прелоад основных сабсетов */}
-        <link
-          rel="preload"
-          href="/fonts/balsamiq-sans-400-cyrillic.woff2"
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
-        <link
-          rel="preload"
-          href="/fonts/balsamiq-sans-400-latin.woff2"
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
         <link
           rel="preconnect"
           href="https://fonts.googleapis.com"

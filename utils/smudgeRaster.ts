@@ -15,6 +15,7 @@ import {
   mapRasterPointToDocumentPoint,
 } from '@/utils/cloneStamp';
 import type { PixelRect, RasterEffectPreview, RasterEffectSession, RasterEffectTarget } from '@/utils/rasterEffectSession';
+import { canvasToPersistentDataUrl, registerRuntimeRasterSource } from '@/utils/runtimeRasterSources';
 
 type RasterPlacement = Partial<LayerTransform> & {
   crop?: CropRect | null;
@@ -265,7 +266,7 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
   const working = window.document.createElement('canvas');
   working.width = document.width;
   working.height = document.height;
-  const workingContext = working.getContext('2d');
+  const workingContext = working.getContext('2d', { willReadFrequently: true });
   if (!workingContext) throw new Error('Canvas недоступен.');
   workingContext.drawImage(original, 0, 0);
   let selectionMask: HTMLCanvasElement | null = null;
@@ -276,13 +277,13 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
   const selectionPixels = selectionMask?.getContext('2d', { willReadFrequently: true })?.getImageData(0, 0, document.width, document.height).data ?? null;
   let sampleAllPixels: Uint8ClampedArray | null = null;
   if (options.tool === 'smudge' && options.settings.sampleAllLayers) {
-    const composite = await renderDocumentToCanvas(document, 'png');
+    const composite = await renderDocumentToCanvas(document, 'png', { willReadFrequently: true });
     sampleAllPixels = composite.getContext('2d', { willReadFrequently: true })?.getImageData(0, 0, document.width, document.height).data ?? null;
   }
   const segmentMask = window.document.createElement('canvas');
   segmentMask.width = document.width;
   segmentMask.height = document.height;
-  const segmentContext = segmentMask.getContext('2d');
+  const segmentContext = segmentMask.getContext('2d', { willReadFrequently: true });
   if (!segmentContext) throw new Error('Canvas недоступен.');
   const latest = useStore.getState();
   const latestDocument = latest.documents[latest.activeDocIndex];
@@ -295,6 +296,12 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
   let cancelled = false;
   let committing = false;
   let committedId: string | null = null;
+  const previewScale = Number.isFinite(options.previewScale) && options.previewScale > 0 ? options.previewScale : 1;
+  const preview = window.document.createElement('canvas');
+  preview.width = Math.max(1, Math.round(document.width * previewScale));
+  preview.height = Math.max(1, Math.round(document.height * previewScale));
+  const previewContext = preview.getContext('2d');
+  if (!previewContext) throw new Error('Canvas недоступен.');
   return {
     append(points) {
       if (cancelled || committing || committedId) return;
@@ -329,16 +336,9 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
       if (cancelled || committing || committedId || !pendingPreviewBounds) return null;
       const bounds = pendingPreviewBounds;
       pendingPreviewBounds = null;
-      const scale = Number.isFinite(options.previewScale) && options.previewScale > 0 ? options.previewScale : 1;
-      const width = Math.max(1, Math.round(document.width * scale));
-      const height = Math.max(1, Math.round(document.height * scale));
-      const preview = window.document.createElement('canvas');
-      preview.width = width;
-      preview.height = height;
-      const context = preview.getContext('2d');
-      if (!context) throw new Error('Canvas недоступен.');
-      drawPlacedLayer(context, working, placement, width, height);
-      return { canvas: preview, bounds: { x: Math.floor(bounds.x * scale), y: Math.floor(bounds.y * scale), width: Math.ceil(bounds.width * scale), height: Math.ceil(bounds.height * scale) }, target, opacity: 1 };
+      previewContext.clearRect(0, 0, preview.width, preview.height);
+      drawPlacedLayer(previewContext, working, placement, preview.width, preview.height);
+      return { canvas: preview, bounds: { x: Math.floor(bounds.x * previewScale), y: Math.floor(bounds.y * previewScale), width: Math.ceil(bounds.width * previewScale), height: Math.ceil(bounds.height * previewScale) }, target, opacity: 1 };
     },
     async commit() {
       if (cancelled) throw new Error('Операция отменена.');
@@ -350,7 +350,8 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
       if (!commitDocument || commitDocument.id !== document.id) throw new Error('Активная страница изменилась.');
       resolveTarget(commitDocument, target);
       if (targetRevision(commitDocument, target) !== revision) throw new Error('Содержимое или геометрия слоя изменились.');
-      const src = working.toDataURL('image/png');
+      const src = await canvasToPersistentDataUrl(working);
+      registerRuntimeRasterSource(src, working);
       if (target.type === 'base') commitState.commitBaseRasterEffect(src);
       else {
         commitState.pushHistory();

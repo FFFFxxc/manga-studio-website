@@ -31,7 +31,7 @@ export async function buildColorSamplingCanvas(
   doc: ImageDocument,
   mode: EyedropperSampleMode,
 ): Promise<HTMLCanvasElement> {
-  if (mode === 'all') return renderDocumentToCanvas(doc, 'png');
+  if (mode === 'all') return renderDocumentToCanvas(doc, 'png', { willReadFrequently: true });
   const selected = doc.selectedLayer;
   if (selected?.type === 'mask') throw new Error('Выберите базовый или растровый слой.');
   const target = selected?.type === 'ai'
@@ -40,7 +40,7 @@ export async function buildColorSamplingCanvas(
   const canvas = document.createElement('canvas');
   canvas.width = doc.width;
   canvas.height = doc.height;
-  const context = canvas.getContext('2d');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) throw new Error('Canvas недоступен.');
   await drawRasterReferenceToContext(context, doc, target);
   return canvas;

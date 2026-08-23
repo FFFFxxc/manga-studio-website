@@ -99,7 +99,7 @@ export async function buildSmartCleanup(
     const maskCanvas = document.createElement('canvas');
     maskCanvas.width = canvas.width;
     maskCanvas.height = canvas.height;
-    const maskCtx = maskCanvas.getContext('2d')!;
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
     maskCtx.fillStyle = '#000000';
     maskCtx.fillRect(0, 0, canvas.width, canvas.height);
     boxes.forEach(box => fillLine(maskCtx, box, canvas.width, canvas.height, '#ffffff'));

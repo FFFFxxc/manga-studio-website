@@ -11,6 +11,8 @@ class PixelCanvas {
   private pixelHeight = 0;
   pixels = new Uint8ClampedArray();
   readonly context = new PixelContext(this);
+  private contextInitialized = false;
+  firstContextOptions: CanvasRenderingContext2DSettings | undefined;
 
   get width() { return this.pixelWidth; }
   set width(value: number) {
@@ -24,7 +26,11 @@ class PixelCanvas {
     this.resize();
   }
 
-  getContext(type: string) {
+  getContext(type: string, options?: CanvasRenderingContext2DSettings) {
+    if (type === '2d' && !this.contextInitialized) {
+      this.contextInitialized = true;
+      this.firstContextOptions = options;
+    }
     return type === '2d' ? this.context : null;
   }
 
@@ -47,6 +53,7 @@ class PixelCanvas {
 class PixelContext {
   filter = 'none';
   imageSmoothingEnabled = true;
+  readbackCount = 0;
 
   constructor(private readonly canvas: PixelCanvas) {}
 
@@ -60,6 +67,7 @@ class PixelContext {
   }
 
   getImageData(x: number, y: number, width: number, height: number) {
+    this.readbackCount += 1;
     const image = this.createImageData(width, height);
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
@@ -109,6 +117,8 @@ class PixelContext {
   }
 }
 
+const createdPixelCanvases: PixelCanvas[] = [];
+
 function samplePixel(canvas: PixelCanvas, x: number, y: number, radius: number) {
   const centerX = Math.max(0, Math.min(canvas.width - 1, Math.floor(x)));
   const centerY = Math.max(0, Math.min(canvas.height - 1, Math.floor(y)));
@@ -132,6 +142,7 @@ function samplePixel(canvas: PixelCanvas, x: number, y: number, radius: number) 
 
 function makeCanvas(width: number, height: number, pixel: (x: number, y: number) => readonly number[]) {
   const canvas = new PixelCanvas();
+  createdPixelCanvases.push(canvas);
   canvas.width = width;
   canvas.height = height;
   for (let y = 0; y < height; y += 1) {
@@ -151,9 +162,14 @@ const parameters = {
 
 describe('raster effect primitives', () => {
   beforeEach(() => {
+    createdPixelCanvases.length = 0;
     const createElement = document.createElement.bind(document);
     vi.spyOn(document, 'createElement').mockImplementation(((tagName: string) => {
-      if (tagName.toLowerCase() === 'canvas') return new PixelCanvas() as unknown as HTMLCanvasElement;
+      if (tagName.toLowerCase() === 'canvas') {
+        const canvas = new PixelCanvas();
+        createdPixelCanvases.push(canvas);
+        return canvas as unknown as HTMLCanvasElement;
+      }
       return createElement(tagName);
     }) as typeof document.createElement);
   });
@@ -177,6 +193,24 @@ describe('raster effect primitives', () => {
     expect(expandEffectBounds({ x: 2, y: 3, width: 8, height: 9 }, 6, 12, 14))
       .toEqual({ x: 0, y: 0, width: 12, height: 14 });
   });
+
+  it.each(['blur', 'pixelate', 'noise', 'sharpen'] as const)(
+    'initializes every %s readback canvas with willReadFrequently',
+    mode => {
+      const source = makeCanvas(8, 8, (x, y) => [x * 20, y * 20, 120, 200]);
+
+      renderRasterEffect(
+        source as unknown as HTMLCanvasElement,
+        { x: 1, y: 1, width: 6, height: 6 },
+        mode,
+        parameters,
+      );
+
+      const readbackCanvases = createdPixelCanvases.filter(canvas => canvas.context.readbackCount > 0);
+      expect(readbackCanvases.length).toBeGreaterThan(0);
+      expect(readbackCanvases.every(canvas => canvas.firstContextOptions?.willReadFrequently === true)).toBe(true);
+    },
+  );
 
   it('blurs a hard edge while preserving its source alpha', () => {
     const source = makeCanvas(8, 8, (x, y) => [x < 4 ? 0 : 255, x < 4 ? 0 : 255, x < 4 ? 0 : 255, 80 + y * 20]);

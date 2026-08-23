@@ -2,8 +2,15 @@ import type { AiRasterLayer, ImageDocument, LayerReference, MaskElement, Perspec
 import { resolveLayerOrder } from './layerOrder';
 import { drawBrushStroke } from './brushRaster';
 import { drawPerspectiveImage, isValidPerspectiveQuad, mapDocumentPointToLayerPoint } from './perspective';
+import {
+  canvasToPersistentDataUrl,
+  getRuntimeRasterSource,
+  registerRuntimeRasterSource,
+} from './runtimeRasterSources';
 
-export function loadCleanupImage(src: string): Promise<HTMLImageElement> {
+export function loadCleanupImage(src: string): Promise<CanvasImageSource> {
+  const runtimeSource = getRuntimeRasterSource(src);
+  if (runtimeSource) return Promise.resolve(runtimeSource);
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.crossOrigin = 'anonymous';
@@ -11,6 +18,15 @@ export function loadCleanupImage(src: string): Promise<HTMLImageElement> {
     image.onerror = () => reject(new Error('Не удалось загрузить изображение.'));
     image.src = src;
   });
+}
+
+function sourceDimensions(source: CanvasImageSource) {
+  const image = source as HTMLImageElement;
+  const canvas = source as HTMLCanvasElement;
+  return {
+    width: Number(image.naturalWidth) || Number(canvas.width) || 1,
+    height: Number(image.naturalHeight) || Number(canvas.height) || 1,
+  };
 }
 
 export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
@@ -79,8 +95,9 @@ export async function encodeBlobToBudget(blob: Blob, maxBytes: number): Promise<
   try {
     const image = await loadCleanupImage(url);
     const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
+    const dimensions = sourceDimensions(image);
+    canvas.width = dimensions.width;
+    canvas.height = dimensions.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas недоступен.');
     ctx.drawImage(image, 0, 0);
@@ -219,7 +236,9 @@ export async function bakeStrokeIntoLayerSrc(
     drawBrushStroke(ctx, stroke, docWidth, docHeight);
     ctx.restore();
   }
-  return canvas.toDataURL('image/png');
+  const src = await canvasToPersistentDataUrl(canvas);
+  registerRuntimeRasterSource(src, canvas);
+  return src;
 }
 
 export interface RasterPlacement {
@@ -318,11 +337,17 @@ export async function drawRasterReferenceToContext(
   }
 }
 
-export async function buildCleanupSourceCanvas(doc: ImageDocument): Promise<HTMLCanvasElement> {
+export async function buildCleanupSourceCanvas(
+  doc: ImageDocument,
+  options?: { willReadFrequently?: boolean },
+): Promise<HTMLCanvasElement> {
   const canvas = document.createElement('canvas');
   canvas.width = doc.width;
   canvas.height = doc.height;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext(
+    '2d',
+    options?.willReadFrequently ? { willReadFrequently: true } : undefined,
+  );
   if (!ctx) throw new Error('Canvas недоступен.');
   // Follow the document's unified z-order so previews, exports and AI sources match.
   const order = resolveLayerOrder(doc);
@@ -513,12 +538,13 @@ export async function fitBlobToPixelLimit(blob: Blob, maxPixels: number): Promis
   const url = URL.createObjectURL(blob);
   try {
     const image = await loadCleanupImage(url);
-    const pixels = image.naturalWidth * image.naturalHeight;
+    const dimensions = sourceDimensions(image);
+    const pixels = dimensions.width * dimensions.height;
     if (pixels <= maxPixels) return blob;
     const scale = Math.sqrt(maxPixels / pixels);
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.floor(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.floor(image.naturalHeight * scale));
+    canvas.width = Math.max(1, Math.floor(dimensions.width * scale));
+    canvas.height = Math.max(1, Math.floor(dimensions.height * scale));
     canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
     return canvasToPngBlob(canvas);
   } finally {
@@ -552,7 +578,7 @@ export async function createCleanupPatch(resultSrc: string, maskCanvas: HTMLCanv
 }
 
 export async function createFloodMask(doc: ImageDocument, normalizedX: number, normalizedY: number, threshold: number, contiguous = true) {
-  const source = await buildCleanupSourceCanvas(doc);
+  const source = await buildCleanupSourceCanvas(doc, { willReadFrequently: true });
   const ctx = source.getContext('2d', { willReadFrequently: true })!;
   const { width, height } = source;
   const data = ctx.getImageData(0, 0, width, height).data;

@@ -62,6 +62,7 @@ import { getInlineTextEditorBox } from '@/utils/inlineTextEditorGeometry';
 import { BrushCursor } from './BrushCursor';
 import { getBrushTipRadii } from '@/utils/brushTip';
 import { RasterEffectOverlay, type RasterEffectOverlayHandle } from './RasterEffectOverlay';
+import { getRuntimeRasterSource } from '@/utils/runtimeRasterSources';
 import { buildColorSamplingCanvas, sampleCanvasColor } from '@/utils/colorSampler';
 import { createCloneStampSession } from '@/utils/cloneStamp';
 import { createSharpenBrushSession, createSmudgeSession } from '@/utils/smudgeRaster';
@@ -141,6 +142,25 @@ function useImage(src: string | null | undefined) {
     return () => { image.onload = null; };
   }, [src]);
   return img;
+}
+
+function useRasterSource(src: string | null | undefined) {
+  const cached = getRuntimeRasterSource(src);
+  const [source, setSource] = useState<CanvasImageSource | null>(cached);
+  useEffect(() => {
+    if (!src) { setSource(null); return; }
+    const runtimeSource = getRuntimeRasterSource(src);
+    if (runtimeSource) {
+      setSource(runtimeSource);
+      return;
+    }
+    const image = new window.Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => setSource(image);
+    image.src = src;
+    return () => { image.onload = null; };
+  }, [src]);
+  return src ? (cached ?? source) : null;
 }
 
 function makeCheckerPattern(): HTMLCanvasElement {
@@ -404,7 +424,7 @@ function RasterLayerNode({ layer, width, height, interactive, isSelected, onSele
   const pushHistory = useStore(state => state.pushHistory);
   const adjustments = layer.adjustments;
   const needsProcessing = (layer.eraseElements?.length ?? 0) > 0;
-  const plainImage = useImage(needsProcessing ? null : layer.src);
+  const plainImage = useRasterSource(needsProcessing ? null : layer.src);
   const [erased, setErased] = useState<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -457,7 +477,7 @@ function BaseLayerNode({ doc, width, height, interactive, isSelected, onSelect, 
   const adjustments = doc.baseLayer?.adjustments;
   const eraseElements = doc.baseLayer?.eraseElements;
   const needsProcessing = (eraseElements?.length ?? 0) > 0;
-  const plainImage = useImage(needsProcessing ? null : (doc.cleanup.committed ?? doc.originalSrc));
+  const plainImage = useRasterSource(needsProcessing ? null : (doc.cleanup.committed ?? doc.originalSrc));
 
   useEffect(() => {
     if (!needsProcessing) { setCanvas(null); return; }
@@ -1402,7 +1422,7 @@ export function CanvasArea() {
       } else {
         window.setTimeout(update, 0);
       }
-    }, 450);
+    }, 1400);
   }, [cancelScheduledThumbnail, updateDocumentThumbnail]);
 
   useEffect(() => cancelScheduledThumbnail, [cancelScheduledThumbnail]);

@@ -165,7 +165,7 @@ export async function inpaintMaskedArea(): Promise<void> {
   const { setInpaintRunning, cleanupSettings } = useStore.getState();
   setInpaintRunning(true, 10);
   try {
-    const canvas = await buildCleanupSourceCanvas(doc);
+    const canvas = await buildCleanupSourceCanvas(doc, { willReadFrequently: true });
     const ctx = canvas.getContext('2d')!;
     setInpaintRunning(true, 35);
     const mask = await requireSelectionMask(doc);

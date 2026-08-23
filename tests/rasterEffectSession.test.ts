@@ -29,8 +29,14 @@ class SessionCanvas {
   height = 0;
   alphaBounds: PixelBounds | null = null;
   readonly context = new SessionContext(this);
+  private contextInitialized = false;
+  firstContextOptions: CanvasRenderingContext2DSettings | undefined;
 
-  getContext(type: string) {
+  getContext(type: string, options?: CanvasRenderingContext2DSettings) {
+    if (type === '2d' && !this.contextInitialized) {
+      this.contextInitialized = true;
+      this.firstContextOptions = options;
+    }
     return type === '2d' ? this.context : null;
   }
 
@@ -44,6 +50,7 @@ class SessionContext {
   globalAlpha = 1;
   fillStyle: string | CanvasGradient | CanvasPattern = '#000';
   imageSmoothingEnabled = true;
+  readbackCount = 0;
 
   constructor(readonly canvas: SessionCanvas) {}
 
@@ -64,6 +71,7 @@ class SessionContext {
   }
 
   getImageData(x: number, y: number, width: number, height: number) {
+    this.readbackCount += 1;
     const data = new Uint8ClampedArray(width * height * 4);
     const bounds = this.canvas.alphaBounds;
     if (bounds) {
@@ -98,10 +106,13 @@ class SessionContext {
   }
 }
 
+const createdSurfaces: SessionCanvas[] = [];
+
 function createSurface(width: number, height: number) {
   const canvas = new SessionCanvas();
   canvas.width = width;
   canvas.height = height;
+  createdSurfaces.push(canvas);
   return canvas;
 }
 
@@ -177,6 +188,7 @@ function makeOptions(overrides: Partial<Parameters<typeof createRasterEffectSess
 describe('raster effect stroke session', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    createdSurfaces.length = 0;
     vi.stubGlobal('OffscreenCanvas', SessionCanvas);
     const source = createSurface(100, 80);
     source.alphaBounds = { x: 0, y: 0, width: 100, height: 80 };
@@ -213,6 +225,17 @@ describe('raster effect stroke session', () => {
     expect(preview?.canvas).toMatchObject({ width: 50, height: 40 });
     expect(preview?.target).toEqual({ type: 'ai', id: 'drawing-layer' });
     expect(preview?.opacity).toBe(1);
+  });
+
+  it('initializes every preview readback surface with willReadFrequently', async () => {
+    const session = await createRasterEffectSession(makeOptions());
+    session.append([0.1, 0.2, 0.3, 0.4]);
+
+    await session.renderPreview();
+
+    const readbackSurfaces = createdSurfaces.filter(canvas => canvas.context.readbackCount > 0);
+    expect(readbackSurfaces.length).toBeGreaterThan(0);
+    expect(readbackSurfaces.every(canvas => canvas.firstContextOptions?.willReadFrequently === true)).toBe(true);
   });
 
   it('replaces RGB through the soft mask without increasing source alpha', () => {

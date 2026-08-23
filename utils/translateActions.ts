@@ -249,7 +249,7 @@ export async function translateBubble(
     await aiCleanupMaskedArea(signal);
   } else {
     const mask = await requireSelectionMask(doc);
-    const source = await buildCleanupSourceCanvas(doc);
+    const source = await buildCleanupSourceCanvas(doc, { willReadFrequently: true });
     const erodedMask = erodeMaskCanvas(mask.canvas, 2);
     const fillMask = hasMaskPixels(erodedMask) ? erodedMask : mask.canvas;
     const color = estimateMaskBackgroundColor(source, mask.canvas);

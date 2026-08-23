@@ -84,7 +84,8 @@ function renderBlur(source: HTMLCanvasElement, bounds: RasterEffectBounds, radiu
   context.filter = `blur(${blurRadius}px)`;
   context.drawImage(expandedSource, 0, 0);
   const output = createCanvas(bounds.width, bounds.height);
-  context2d(output).drawImage(
+  // renderRasterEffect reads this result immediately to mix opacity/strength.
+  context2d(output, true).drawImage(
     expandedEffect,
     bounds.x - expandedBounds.x,
     bounds.y - expandedBounds.y,
@@ -209,7 +210,7 @@ function renderSharpen(source: HTMLCanvasElement, bounds: RasterEffectBounds, ra
   const sampleRadius = Math.max(1, Math.round(finiteOr(radius, 1)));
   const expandedBounds = expandEffectBounds(bounds, sampleRadius, source.width, source.height);
   const expandedSource = createCanvas(expandedBounds.width, expandedBounds.height);
-  context2d(expandedSource).drawImage(
+  context2d(expandedSource, true).drawImage(
     source,
     expandedBounds.x,
     expandedBounds.y,
@@ -244,7 +245,8 @@ function renderSharpen(source: HTMLCanvasElement, bounds: RasterEffectBounds, ra
   }
   context.putImageData(result, 0, 0);
   const output = createCanvas(bounds.width, bounds.height);
-  context2d(output).drawImage(
+  // renderRasterEffect reads this result immediately to mix opacity/strength.
+  context2d(output, true).drawImage(
     expandedEffect,
     bounds.x - expandedBounds.x,
     bounds.y - expandedBounds.y,
