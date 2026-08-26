@@ -9,6 +9,18 @@ const stageHarness = vi.hoisted(() => ({
   releasePointerCapture: vi.fn(),
 }));
 
+const eraserHarness = vi.hoisted(() => ({
+  append: vi.fn(),
+  renderPreview: vi.fn(async () => null),
+  commit: vi.fn(async () => 'moved-raster'),
+  cancel: vi.fn(),
+  create: vi.fn(),
+}));
+
+vi.mock('@/utils/eraserRaster', () => ({
+  createEraserSession: eraserHarness.create,
+}));
+
 vi.mock('react-konva', () => {
   interface KonvaProps {
     children?: React.ReactNode;
@@ -160,6 +172,16 @@ describe('CanvasArea brush preview', () => {
   beforeEach(() => {
     stageHarness.setPointerCapture.mockReset();
     stageHarness.releasePointerCapture.mockReset();
+    eraserHarness.append.mockReset();
+    eraserHarness.renderPreview.mockReset().mockResolvedValue(null);
+    eraserHarness.commit.mockReset().mockResolvedValue('moved-raster');
+    eraserHarness.cancel.mockReset();
+    eraserHarness.create.mockReset().mockResolvedValue({
+      append: eraserHarness.append,
+      renderPreview: eraserHarness.renderPreview,
+      commit: eraserHarness.commit,
+      cancel: eraserHarness.cancel,
+    });
     contexts.clear();
     animationFrames = [];
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
@@ -359,6 +381,100 @@ describe('CanvasArea brush preview', () => {
       mode: 'paint',
       purpose: 'paint',
     });
+  });
+
+  // Mutation caught: routing the eraser through the old grey Konva marker
+  // delays real alpha removal until pointerup and stores misplaced points.
+  it('routes an eraser click through the live raster session and commits once', async () => {
+    const document = makeEditorDocument({ id: 'eraser-transform-doc', width: 1000, height: 1000 });
+    document.aiLayers = [{
+      id: 'moved-raster',
+      name: 'Moved raster',
+      src: 'data:image/png;base64,',
+      visible: true,
+      opacity: 1,
+      operation: 'drawing',
+      locked: false,
+      eraseElements: [],
+      crop: null,
+      x: 0.1,
+      y: 0.05,
+      scaleX: 0.5,
+      scaleY: 0.5,
+      rotation: 0,
+      perspective: null,
+      perspectiveSourceBounds: null,
+    }];
+    document.selectedLayer = { id: 'moved-raster', type: 'ai' };
+    document.layerOrder = [
+      { id: document.baseLayer.id, type: 'base' },
+      { id: 'moved-raster', type: 'ai' },
+    ];
+    useStore.setState({ documents: [document], activeDocIndex: 0, activeTool: 'eraser' });
+    render(<CanvasArea />);
+
+    const stage = screen.getByTestId('paint-canvas-stage');
+    fireEvent.pointerDown(stage, { pointerId: 23, button: 0, clientX: 400, clientY: 300 });
+    await act(async () => {});
+    expect(eraserHarness.create).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: document.id,
+      layer: { type: 'ai', id: 'moved-raster' },
+      settings: { size: 0.1, hardness: 0.5, opacity: 0.6 },
+    }));
+    expect(animationFrames).toHaveLength(1);
+    await act(async () => { animationFrames.shift()?.(0); });
+    expect(eraserHarness.append).toHaveBeenCalledTimes(1);
+    const clickPoints = eraserHarness.append.mock.calls[0][0] as number[];
+    expect(clickPoints[0]).toBeCloseTo(0.5, 8);
+    expect(clickPoints[1]).toBeCloseTo(0.5, 8);
+    fireEvent.pointerUp(window, { pointerId: 23, clientX: 400, clientY: 300 });
+    await act(async () => {});
+
+    expect(eraserHarness.commit).toHaveBeenCalledTimes(1);
+    expect(stageHarness.releasePointerCapture).toHaveBeenCalledWith(23);
+    expect(useStore.getState().documents[0].aiLayers[0].eraseElements).toHaveLength(0);
+  });
+
+  it('buffers a continuous eraser stroke by animation frame', async () => {
+    const document = makeEditorDocument({ id: 'eraser-move-doc', width: 1000, height: 1000 });
+    document.baseLayer.locked = false;
+    document.selectedLayer = { id: document.baseLayer.id, type: 'base' };
+    useStore.setState({ documents: [document], activeDocIndex: 0, activeTool: 'eraser' });
+    render(<CanvasArea />);
+    const stage = screen.getByTestId('paint-canvas-stage');
+
+    fireEvent.pointerDown(stage, { pointerId: 31, button: 0, clientX: 300, clientY: 300 });
+    await act(async () => {});
+    const move = new MouseEvent('pointermove', { bubbles: true, clientX: 420, clientY: 300 });
+    Object.defineProperty(move, 'pointerId', { value: 31 });
+    Object.defineProperty(move, 'getCoalescedEvents', {
+      value: () => [{ clientX: 360, clientY: 300 }, { clientX: 420, clientY: 300 }],
+    });
+    stage.dispatchEvent(move);
+
+    expect(animationFrames).toHaveLength(1);
+    expect(eraserHarness.append).not.toHaveBeenCalled();
+    await act(async () => { animationFrames.shift()?.(16); });
+    expect(eraserHarness.append).toHaveBeenCalledTimes(1);
+    expect((eraserHarness.append.mock.calls[0][0] as number[])).toHaveLength(6);
+
+    fireEvent.pointerUp(window, { pointerId: 31 });
+    await act(async () => {});
+    expect(eraserHarness.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start the live eraser on a locked raster layer', () => {
+    const document = makeEditorDocument({ id: 'locked-eraser-doc', width: 1000, height: 1000 });
+    document.selectedLayer = { id: document.baseLayer.id, type: 'base' };
+    useStore.setState({ documents: [document], activeDocIndex: 0, activeTool: 'eraser' });
+    render(<CanvasArea />);
+
+    fireEvent.pointerDown(screen.getByTestId('paint-canvas-stage'), {
+      pointerId: 37, button: 0, clientX: 400, clientY: 300,
+    });
+
+    expect(eraserHarness.create).not.toHaveBeenCalled();
+    expect(screen.getByText('Слой заблокирован — сначала снимите замок')).toBeTruthy();
   });
 });
 
