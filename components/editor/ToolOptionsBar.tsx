@@ -241,7 +241,7 @@ export function ToolOptionsBar() {
         <button onClick={() => state.setLeftTab('text')}>Открыть настройки</button>
       </>}
       {activeTool === 'select' && (selectedObject ? <>
-        <span>{selectedObject.type === 'text' ? 'Текст' : selectedObject.type === 'shape' ? 'Фигура' : 'Вотерка'}</span>
+        <span>{{ text: 'Текст', shape: 'Фигура', bubble: 'Бабл', translationMask: 'Маска перевода', watermark: 'Водяной знак' }[selectedObject.type]}</span>
         <button onClick={state.duplicateSelectedObject}><Copy size={14} /> Дублировать</button>
         <button onClick={() => state.moveSelectedObject('forward')}><Layers size={14} /> Вперёд</button>
         <button className="danger" onClick={state.deleteSelectedObject}><Trash2 size={14} /> Удалить</button>

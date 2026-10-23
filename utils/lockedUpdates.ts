@@ -9,6 +9,7 @@ const GEOMETRY_KEYS = new Set([
   'crop',
   'perspective',
   'perspectiveSourceBounds',
+  'paths',
 ]);
 
 export function filterLockedGeometryUpdates<T extends object>(

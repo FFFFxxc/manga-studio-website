@@ -136,17 +136,12 @@ function TextOptions({ objectId }: { objectId?: string }) {
         <span style={{ alignSelf: 'center', fontSize: 11, color: 'var(--text-secondary)' }}>Толщина обводки</span>
         <input aria-label="Толщина обводки" type="number" min={0} max={40} value={settings.strokeWidth} onChange={event => apply({ strokeWidth: Number(event.target.value) })} style={fieldStyle} />
       </div>
-      <PaintEditor
-        label="Обводка текста"
-        solidColorAriaLabel="Цвет обводки"
-        value={settings.strokeStyle}
-        allowRadial={false}
-        onGestureStart={beginContinuous}
-        onChange={paint => apply({
-          strokeStyle: paint,
-          stroke: paintFallbackColor(paint, settings.stroke || '#000000'),
-        }, false)}
-      />
+      <Field label="Цвет обводки">
+        <input aria-label="Цвет обводки" type="color" value={/^#[0-9a-f]{6}$/i.test(settings.stroke) ? settings.stroke : '#000000'}
+          onPointerDown={beginContinuous}
+          onChange={event => apply({ stroke: event.target.value, strokeStyle: { type: 'solid', color: event.target.value } }, false)}
+          style={{ ...fieldStyle, height: 30, padding: 2 }} />
+      </Field>
       <Field label="Цвет тени"><input aria-label="Цвет тени" type="color" value={settings.shadowColor === 'transparent' ? '#000000' : settings.shadowColor} onChange={event => apply({ shadowColor: event.target.value })} style={{ ...fieldStyle, height: 30, padding: 2 }} /></Field>
       <RangeField label="Размытие тени" value={settings.shadowBlur} min={0} max={80} step={1} onPointerDown={beginContinuous} onChange={value => apply({ shadowBlur: value }, false)} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>

@@ -384,12 +384,59 @@ export function TextPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="section-label">Текст</div>
+      {!selectedText && (<>
+      {/* Draft text — shown even without a selected object */}
+      <div>
+        <PanelLabel>Текст для вставки</PanelLabel>
+        <textarea
+          value={textSettings.draftText}
+          onChange={e => updateTextSettings({ draftText: e.target.value })}
+          placeholder="Текст можно ввести после создания рамки"
+          rows={3}
+          onWheel={e => e.stopPropagation()}
+          style={{
+            width: '100%',
+            resize: 'vertical',
+            background: 'var(--bg-panel-raised)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 6,
+            color: 'var(--text-primary)',
+            fontSize: 12,
+            padding: '6px 8px',
+            fontFamily: 'inherit',
+            lineHeight: 1.4,
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ marginTop: 5, color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.45 }}>
+          Потяните рамку · Enter — новая строка · Ctrl/⌘+Enter — готово · Esc — отмена
+        </div>
+      </div>
+
+      <button
+        onClick={handleActivateTextTool}
+        disabled={!hasDoc}
+        style={{
+          padding: '7px 10px', borderRadius: 6, fontWeight: 600, fontSize: 13,
+          border: 'none',
+          background: hasDoc ? 'var(--accent)' : 'var(--bg-active)',
+          color: hasDoc ? '#fff' : 'var(--text-muted)',
+          cursor: hasDoc ? 'pointer' : 'not-allowed',
+        }}
+      >
+        Разместить текст (T)
+      </button>
+      </>)}
+      {selectedText && <button className="ui-button ui-button-secondary" onClick={() => {
+        useStore.getState().setSelectedObject(null);
+        handleActivateTextTool();
+      }}>+ Новый текст</button>}
 
       {/* Page auto-translate (OCR + translate + overlay) */}
+      <details className="editor-disclosure" open={isPageTranslating || undefined}>
+      <summary>Автоперевод страницы</summary>
       <div className="editor-card editor-card-accent" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Автоперевод страницы</div>
           <div style={{ marginTop: 3, fontSize: 10, lineHeight: 1.5, color: 'var(--text-secondary)' }}>Распознает реплики, скроет оригинал и добавит редактируемый перевод.</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -437,6 +484,7 @@ export function TextPanel() {
           </div>
         )}
       </div>
+      </details>
 
       {(activeDoc?.translationMasks?.length ?? 0) > 0 && (
         <details className="editor-card">
@@ -467,7 +515,8 @@ export function TextPanel() {
       <div className="divider" />
 
       {/* Presets */}
-      <PanelSection title="Пресеты">
+      <details className="editor-disclosure"><summary>Готовые стили текста</summary>
+      <PanelSection>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
           {Object.keys(TEXT_PRESETS).map(key => (
             <button
@@ -489,6 +538,7 @@ export function TextPanel() {
           ))}
         </div>
       </PanelSection>
+      </details>
 
       <div className="divider" />
 
@@ -602,6 +652,7 @@ export function TextPanel() {
         </select>
       </div>
 
+      <details className="editor-disclosure"><summary>Мои шрифты</summary>
       <button
         onClick={() => customFontRef.current?.click()}
         style={{
@@ -660,6 +711,8 @@ export function TextPanel() {
         </div>
       )}
 
+      </details>
+
       {/* Text paint uses the same editor as shapes, including linear/radial gradients. */}
       <PaintEditor
         label="Заливка текста"
@@ -699,17 +752,14 @@ export function TextPanel() {
           style={{ width: 44 }}
         />
       </PanelRow>
-      <PaintEditor
-        label="Обводка текста"
-        solidColorAriaLabel="Цвет обводки"
-        value={settings.strokeStyle}
-        allowRadial={false}
-        onGestureStart={beginTextPaintGesture}
-        onChange={paint => update({
-          strokeStyle: paint,
-          stroke: paintFallbackColor(paint, settings.stroke || '#000000'),
-        }, { history: false })}
-      />
+      <PanelRow label="Цвет обводки">
+        <DeferredColorInput
+          label="Цвет обводки"
+          value={/^#[0-9a-f]{6}$/i.test(settings.stroke) ? settings.stroke : '#000000'}
+          onCommit={color => update({ stroke: color, strokeStyle: { type: 'solid', color } }, { history: true })}
+        />
+      </PanelRow>
+      <details className="editor-disclosure"><summary>Тень</summary>
       <PanelRow label="Тень">
         <DeferredColorInput
           label="Цвет тени"
@@ -725,6 +775,8 @@ export function TextPanel() {
         max={40}
         onChange={v => update({ shadowBlur: v })}
       />
+
+      </details>
 
       <PanelSlider
         label={`Размер`}
@@ -766,47 +818,7 @@ export function TextPanel() {
 
       <div className="divider" />
 
-      {/* Draft text — shown even without a selected object */}
-      <div>
-        <PanelLabel>Текст для вставки</PanelLabel>
-        <textarea
-          value={textSettings.draftText}
-          onChange={e => updateTextSettings({ draftText: e.target.value })}
-          placeholder="Текст можно ввести после создания рамки"
-          rows={3}
-          onWheel={e => e.stopPropagation()}
-          style={{
-            width: '100%',
-            resize: 'vertical',
-            background: 'var(--bg-panel-raised)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 6,
-            color: 'var(--text-primary)',
-            fontSize: 12,
-            padding: '6px 8px',
-            fontFamily: 'inherit',
-            lineHeight: 1.4,
-            boxSizing: 'border-box',
-          }}
-        />
-        <div style={{ marginTop: 5, color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.45 }}>
-          Потяните рамку · Enter — новая строка · Ctrl/⌘+Enter — готово · Esc — отмена
-        </div>
-      </div>
 
-      <button
-        onClick={handleActivateTextTool}
-        disabled={!hasDoc}
-        style={{
-          padding: '7px 10px', borderRadius: 6, fontWeight: 600, fontSize: 13,
-          border: 'none',
-          background: hasDoc ? 'var(--accent)' : 'var(--bg-active)',
-          color: hasDoc ? '#fff' : 'var(--text-muted)',
-          cursor: hasDoc ? 'pointer' : 'not-allowed',
-        }}
-      >
-        Разместить текст (T)
-      </button>
     </div>
   );
 }

@@ -91,6 +91,7 @@ export function RightPanel() {
   return (
     <aside
       className="editor-sidebar-right"
+      id="editor-pages"
       aria-label="Страницы и слои"
       style={{
         display: 'flex',

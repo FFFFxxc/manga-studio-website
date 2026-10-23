@@ -206,6 +206,7 @@ function snap(doc: ImageDocument): HistorySnapshot {
     })),
     shapes: (doc.shapes ?? []).map(s => ({
       ...s,
+      paths: s.paths ? structuredClone(s.paths) : undefined,
       fillStyle: s.fillStyle ? clonePaintStyle(s.fillStyle) : undefined,
       strokeStyle: s.strokeStyle ? clonePaintStyle(s.strokeStyle) : undefined,
       glow: s.glow ? cloneGlowStyle(s.glow) : undefined,
@@ -379,7 +380,7 @@ export const useStore = create<AppState>((set, get) => ({
   documents: [],
   activeDocIndex: -1,
   activeTool: 'select',
-  leftTab: 'watermark',
+  leftTab: 'cleanup',
   selectedObject: null,
   inlineEditingTextId: null,
   wmSettings: defaultWmSettings,

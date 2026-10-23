@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ToolRail } from '@/components/editor/ToolRail';
 import { useStore } from '@/store/useStore';
@@ -17,6 +17,7 @@ describe('retouch tool rail', () => {
 
   it.each(['Пипетка', 'Штамп', 'Палец', 'Резкость'])('exposes %s as an accessible tool', label => {
     render(<ToolRail />);
+    if (label !== 'Пипетка') fireEvent.click(screen.getByText('Ещё'));
     expect(screen.getByRole('button', { name: new RegExp(label) })).toBeTruthy();
   });
 });

@@ -13,6 +13,7 @@ import type {
 } from '@/types';
 import { sanitizePerspectiveQuad } from '@/utils/perspective';
 import { normalizeGlowStyle, normalizePaintStyle } from '@/utils/objectPaint';
+import { sanitizeShapePaths } from '@/utils/shapePoints';
 
 export interface CoordinateSpace {
   viewport: { x: number; y: number; scale: number };
@@ -178,6 +179,7 @@ export function sanitizeShape(shape: ShapeObject): ShapeObject | null {
   if (![shape.x, shape.y, shape.width, shape.height].every(validPosition)) return null;
   return {
     ...shape,
+    paths: sanitizeShapePaths(shape.paths),
     x: clamp01(shape.x),
     y: clamp01(shape.y),
     width: Math.max(0.005, Math.min(1, Math.abs(shape.width))),
