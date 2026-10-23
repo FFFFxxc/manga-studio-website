@@ -3,8 +3,10 @@ import {
   getPerspectiveSubdivisionCount,
   perspectiveHomography,
   projectHomography,
+  invertHomography,
   type PerspectiveQuality,
 } from '@/utils/perspective';
+import { rasterizePerspectivePixels } from '@/utils/perspectivePixels';
 
 interface Point {
   x: number;
@@ -161,6 +163,43 @@ export function drawPerspectiveCanvas(
   canvas.height = bounds.height;
   const meshContext = canvas.getContext('2d');
   if (!meshContext) return;
+  // Readable sources can be warped exactly. Triangle compositing is only a
+  // last resort for sources whose pixels the browser does not let us read.
+  if (typeof meshContext.createImageData === 'function' && typeof meshContext.putImageData === 'function') {
+    try {
+      const inverse = invertHomography(homography);
+      const readCanvas = createCanvas(options);
+      if (inverse && readCanvas) {
+        readCanvas.width = sourceSize.width;
+        readCanvas.height = sourceSize.height;
+        const readContext = readCanvas.getContext('2d', { willReadFrequently: true });
+        if (readContext && typeof readContext.getImageData === 'function') {
+          readContext.drawImage(source, 0, 0);
+          const sourcePixels = readContext.getImageData(0, 0, readCanvas.width, readCanvas.height);
+          const clipped = {
+            x: Math.max(0, bounds.x), y: Math.max(0, bounds.y),
+            width: Math.max(0, Math.min(width, bounds.x + bounds.width) - Math.max(0, bounds.x)),
+            height: Math.max(0, Math.min(height, bounds.y + bounds.height) - Math.max(0, bounds.y)),
+          };
+          if (!clipped.width || !clipped.height) return;
+          canvas.width = clipped.width;
+          canvas.height = clipped.height;
+          const pixels = meshContext.createImageData(clipped.width, clipped.height);
+          pixels.data.set(rasterizePerspectivePixels({ source: sourcePixels, inverse, bounds: clipped, destination, sourceBounds, antialias: options.quality !== 'drag' }));
+          meshContext.putImageData(pixels, 0, 0);
+          ctx.save();
+          ctx.globalAlpha *= options.opacity ?? 1;
+          ctx.drawImage(canvas, clipped.x, clipped.y);
+          ctx.restore();
+          return;
+        }
+      }
+    } catch {
+      // Cross-origin images can prohibit readback; retain the drawable fallback.
+      canvas.width = bounds.width;
+      canvas.height = bounds.height;
+    }
+  }
   const localize = (point: Point) => ({ x: point.x - bounds.x, y: point.y - bounds.y });
   let firstTriangle = true;
 

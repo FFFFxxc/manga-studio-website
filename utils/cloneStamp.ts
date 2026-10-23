@@ -56,6 +56,34 @@ function unitPoint(point: { x: number; y: number }, bounds?: CropRect | null) {
   return { x: (point.x - bounds.x) / bounds.width, y: (point.y - bounds.y) / bounds.height };
 }
 
+/** Cache transform math once per retouch gesture rather than solving per pixel. */
+export function createRasterPointMapper(placement: RasterPlacement, width: number, height: number) {
+  const forward = placement.perspective && isValidPerspectiveQuad(placement.perspective)
+    ? perspectiveHomography(placement.perspective, width, height) : null;
+  const inverse = forward && invertHomography(forward);
+  const angle = (placement.rotation ?? 0) * Math.PI / 180;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const sx = placement.scaleX || 1, sy = placement.scaleY || 1;
+  const tx = (placement.x ?? 0) * width, ty = (placement.y ?? 0) * height;
+  return {
+    toRaster(point: { x: number; y: number }) {
+      if (inverse) return sourceBoundsPoint(projectHomography(inverse, { x: point.x * width, y: point.y * height }), placement.perspectiveSourceBounds);
+      const x = point.x * width - tx, y = point.y * height - ty;
+      return { x: (x * cos + y * sin) / sx / width, y: (-x * sin + y * cos) / sy / height };
+    },
+    toDocument(point: { x: number; y: number }) {
+      if (forward) {
+        const unit = unitPoint(point, placement.perspectiveSourceBounds);
+        if (!unit) return null;
+        const projected = projectHomography(forward, unit);
+        return { x: projected.x / width, y: projected.y / height };
+      }
+      const x = point.x * width * sx, y = point.y * height * sy;
+      return { x: (x * cos - y * sin + tx) / width, y: (x * sin + y * cos + ty) / height };
+    },
+  };
+}
+
 /** Maps document-normalized coordinates into the raster's untransformed bitmap. */
 export function mapDocumentPointToRasterPoint(
   point: { x: number; y: number },
