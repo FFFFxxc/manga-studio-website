@@ -32,7 +32,7 @@ export function resolveImageImportDestination({
   hasDocument: boolean;
   forcePage?: boolean;
   remembered: ImageImportDestination | null;
-}): ImageImportDestination | null {
+}): ImageImportDestination {
   if (!hasDocument || forcePage) return 'page';
-  return remembered;
+  return remembered ?? 'layer';
 }

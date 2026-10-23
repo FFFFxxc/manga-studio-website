@@ -7,8 +7,12 @@ export function uid(): string {
 
 export const ACCEPTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+export function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || (!file.type && /\.(png|jpe?g|webp)$/i.test(file.name));
+}
+
 export function validateFile(file: File): string | null {
-  if (!ACCEPTED_TYPES.has(file.type)) {
+  if (!ACCEPTED_TYPES.has(file.type) && !(!file.type && isImageFile(file))) {
     const ext = file.name.split('.').pop()?.toUpperCase() ?? 'неизвестный';
     return `Формат ${ext} не поддерживается. Принимаются JPG, PNG, WebP.`;
   }

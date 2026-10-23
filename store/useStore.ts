@@ -297,6 +297,7 @@ export interface AppState {
   updateMask: (id: string, updates: Partial<Pick<MaskLayer, 'name' | 'visible' | 'opacity' | 'locked'>>, options?: { history?: boolean }) => void;
   deleteMask: (id: string) => void;
   addAiLayer: (documentId: string, layer: AiRasterLayer) => void;
+  addAiLayers: (documentId: string, layers: AiRasterLayer[]) => void;
   updateAiLayer: (id: string, updates: Partial<Omit<AiRasterLayer, 'id' | 'operation'>>, options?: { history?: boolean }) => void;
   commitBaseRasterEffect: (dataUrl: string) => void;
   updateAiLayerPerspective: (id: string, quad: PerspectiveQuad | null, options?: { history?: boolean }) => void;
@@ -710,12 +711,14 @@ export const useStore = create<AppState>((set, get) => ({
     return { documents: docs };
   }),
 
-  addAiLayer: (documentId, layer) => set(state => {
+  addAiLayer: (documentId, layer) => get().addAiLayers(documentId, [layer]),
+
+  addAiLayers: (documentId, layers) => set(state => {
     const index = state.documents.findIndex(doc => doc.id === documentId);
-    if (index < 0) return {};
+    if (index < 0 || layers.length === 0) return {};
     const docs = [...state.documents];
     const doc = withHistory(docs[index]);
-    const normalizedLayer: AiRasterLayer = {
+    const normalizedLayers: AiRasterLayer[] = layers.map(layer => ({
       ...layer,
       visible: layer.visible !== false,
       opacity: Number.isFinite(layer.opacity) ? Math.max(0, Math.min(1, layer.opacity)) : 1,
@@ -726,12 +729,16 @@ export const useStore = create<AppState>((set, get) => ({
       scaleY: Number.isFinite(layer.scaleY) && layer.scaleY !== 0 ? layer.scaleY : 1,
       rotation: Number.isFinite(layer.rotation) ? layer.rotation : 0,
       eraseElements: layer.eraseElements ?? [],
-    };
-    const layerOrder = [...resolveLayerOrder(doc), { type: 'ai' as const, id: normalizedLayer.id }];
+    }));
+    const normalizedLayer = normalizedLayers[normalizedLayers.length - 1];
+    const layerOrder = [...resolveLayerOrder(doc), ...normalizedLayers.map(layer => ({ type: 'ai' as const, id: layer.id }))];
     docs[index] = {
       ...doc,
-      aiLayers: [...(doc.aiLayers ?? []), normalizedLayer],
-      masks: doc.masks.map(mask => mask.id === normalizedLayer.maskId ? { ...mask, resultLayerId: normalizedLayer.id } : mask),
+      aiLayers: [...(doc.aiLayers ?? []), ...normalizedLayers],
+      masks: doc.masks.map(mask => {
+        const result = normalizedLayers.find(layer => layer.maskId === mask.id);
+        return result ? { ...mask, resultLayerId: result.id } : mask;
+      }),
       selectedLayer: { id: normalizedLayer.id, type: 'ai' },
       layerOrder,
     };

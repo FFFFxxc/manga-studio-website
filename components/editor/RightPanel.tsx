@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { GripVertical } from 'lucide-react';
+import { ImageLayerImportButton } from './ImageLayerImportButton';
 import { useStore } from '@/store/useStore';
 import type { ImageDocument, LayerVisibility, BaseLayerAdjustments, ShapeKind } from '@/types';
 import { LayerContextMenu } from './LayerContextMenu';
@@ -11,7 +12,6 @@ import { WatermarkContextMenu, type WatermarkContextMenuState } from './Watermar
 import { resolveLayerOrder } from '@/utils/layerOrder';
 import { createDrawingLayer } from '@/utils/layerActions';
 import { loadImagesFromFiles } from '@/utils/imageUtils';
-import { IMAGE_IMPORT_PREFERENCE_EVENT, loadImageImportPreference, storeImageImportPreference } from '@/utils/pageImportPreference';
 import { useEditorUiStore } from '@/store/useEditorUiStore';
 
 const SHAPE_LABELS: Record<ShapeKind, string> = {
@@ -131,13 +131,6 @@ function GalleryPanel() {
   const dragPageRef = useRef<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
-  const [hasRememberedImportChoice, setHasRememberedImportChoice] = useState(() => Boolean(loadImageImportPreference()));
-
-  useEffect(() => {
-    const syncPreference = () => setHasRememberedImportChoice(Boolean(loadImageImportPreference()));
-    window.addEventListener(IMAGE_IMPORT_PREFERENCE_EVENT, syncPreference);
-    return () => window.removeEventListener(IMAGE_IMPORT_PREFERENCE_EVENT, syncPreference);
-  }, []);
 
   const addPages = async (files: File[]) => {
     if (files.length === 0) return;
@@ -174,19 +167,6 @@ function GalleryPanel() {
             event.target.value = '';
           }}
         />
-        {hasRememberedImportChoice && (
-          <button
-            type="button"
-            onClick={() => {
-              storeImageImportPreference(null);
-              setHasRememberedImportChoice(false);
-            }}
-            title="При следующей вставке или перетаскивании снова спросить: страница или слой"
-            style={{ width: '100%', marginTop: 5, border: 0, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10 }}
-          >
-            Сбросить выбор вставки
-          </button>
-        )}
         {errors.map((error, index) => <div key={index} style={{ marginTop: 5, fontSize: 10, color: 'var(--danger)' }}>{error}</div>)}
       </div>
 
@@ -347,6 +327,8 @@ const LAYERS: { key: keyof LayerVisibility; label: string; icon: string }[] = [
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px' }}>
+      <ImageLayerImportButton fullWidth />
+      <div style={{ marginTop: 5, marginBottom: 16, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>PNG сохраняет прозрачность. Можно перетащить файл на холст или вставить Ctrl+V.</div>
       {/* Layer visibility toggles */}
       <div className="section-label" style={{ padding: '0 2px 6px' }}>Видимость слоёв</div>
       {LAYERS.map(layer => (
@@ -475,7 +457,7 @@ const LAYERS: { key: keyof LayerVisibility; label: string; icon: string }[] = [
               <div style={{ flex: 1, minWidth: 0 }}>
                 <LayerRow
                   label={layer.name}
-                  prefix="AI"
+                  prefix={layer.operation === 'drawing' ? '▧' : 'AI'}
                   selected={activeDoc.selectedLayer?.id === layer.id}
                   visible={layer.visible}
                   opacity={layer.opacity}

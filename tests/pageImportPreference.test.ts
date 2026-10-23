@@ -15,8 +15,8 @@ describe('image import destination', () => {
     expect(resolveImageImportDestination({ hasDocument: true, forcePage: true, remembered: 'layer' })).toBe('page');
   });
 
-  it('asks when a document is open and no choice was remembered', () => {
-    expect(resolveImageImportDestination({ hasDocument: true, remembered: null })).toBeNull();
+  it('defaults to a layer on the open page without a blocking choice dialog', () => {
+    expect(resolveImageImportDestination({ hasDocument: true, remembered: null })).toBe('layer');
   });
 
   it('loads, stores and resets a valid preference', () => {

@@ -5,7 +5,7 @@ import { Stage, Layer, Image as KonvaImage, Line, Text, Transformer, Group, Rect
 import Konva from 'konva';
 import { useStore } from '@/store/useStore';
 import { useShallow } from 'zustand/react/shallow';
-import { loadImagesFromFiles, uid, validateFile } from '@/utils/imageUtils';
+import { loadImagesFromFiles, uid } from '@/utils/imageUtils';
 import type { AiRasterLayer, BaseLayerAdjustments, BlurSettings, ImageDocument, MaskElement, StrokeData, WatermarkObject, TextObject, ShapeObject, CropRect, BubbleObject, PerspectiveQuad, TranslationMaskObject } from '@/types';
 import { resolveVisualLayerOrder } from '@/utils/layerOrder';
 import { buildBaseCanvas, buildRasterLayerCanvas, createFloodMask, bakeStrokeIntoLayerSrc } from '@/utils/cleanupRaster';
@@ -43,9 +43,7 @@ import {
   shouldKeepNativePaste,
 } from '@/utils/pastedImageLayers';
 import {
-  loadImageImportPreference,
   resolveImageImportDestination,
-  storeImageImportPreference,
   type ImageImportDestination,
 } from '@/utils/pageImportPreference';
 import { toKonvaAdjustmentValues } from '@/utils/konvaAdjustments';
@@ -78,6 +76,8 @@ const RASTER_FILTERS = [Konva.Filters.Brightness, Konva.Filters.Contrast, Konva.
 interface PendingImageImport {
   files: File[];
   source: 'paste' | 'drop' | 'picker';
+  documentId?: string;
+  center?: { x: number; y: number };
 }
 
 interface PendingTextDraft {
@@ -1325,8 +1325,10 @@ export function CanvasArea() {
   const [wandPending, setWandPending] = useState<{ documentId: string; maskId: string; elementId: string; coverage: number } | null>(null);
   const [wandInfo, setWandInfo] = useState<string | null>(null);
   const [clipboardInfo, setClipboardInfo] = useState<string | null>(null);
-  const [pendingImageImport, setPendingImageImport] = useState<PendingImageImport | null>(null);
-  const [rememberImportChoice, setRememberImportChoice] = useState(false);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const [dragAsPage, setDragAsPage] = useState(false);
+  const fileDragDepth = useRef(0);
+  const imageImportQueue = useRef<Promise<void>>(Promise.resolve());
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [shapeContextMenu, setShapeContextMenu] = useState<ShapeContextMenuState | null>(null);
   const [watermarkContextMenu, setWatermarkContextMenu] = useState<WatermarkContextMenuState | null>(null);
@@ -3047,47 +3049,42 @@ export function CanvasArea() {
     }
   }, [addDocuments]);
 
-  const importImagesAsLayers = useCallback(async (files: File[]) => {
+  const importImagesAsLayers = useCallback(async (files: File[], documentId?: string, center?: { x: number; y: number }) => {
+    if (files.length === 0) return;
     const state = useStore.getState();
-    const doc = state.documents[state.activeDocIndex];
-    if (!doc || files.length === 0) {
-      await importImagesAsPages(files);
+    const doc = documentId ? state.documents.find(item => item.id === documentId) : state.documents[state.activeDocIndex];
+    if (!doc) {
+      toast({ title: 'Страница для вставки была закрыта', description: 'Откройте нужную страницу и повторите вставку.' });
       return;
     }
     const errors: string[] = [];
-    const validFiles = files.filter(file => {
-      const error = validateFile(file);
-      if (error) errors.push(error);
-      return !error;
-    });
-    setLoadErrors(errors);
-    if (errors.length > 0) toast({ title: 'Не удалось добавить файл', description: errors.join(' ') });
-    if (validFiles.length === 0) return;
+    setLoadErrors([]);
     setLoadingFiles(true);
     try {
-      const ids = await pasteExternalImagesAsLayers(validFiles, doc.id);
-      setClipboardInfo(ids.length > 1 ? `Вставлено слоёв: ${ids.length}` : 'Изображение вставлено новым слоем');
+      const ids = await pasteExternalImagesAsLayers(files, doc.id, { center, onError: error => errors.push(error) });
+      setClipboardInfo(ids.length > 1 ? 'Вставлено слоёв: ' + ids.length + ' · Ctrl+Z — отменить вставку' : 'Изображение вставлено слоем · Ctrl+Z — отменить');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось вставить изображение.';
-      setLoadErrors(previous => [...previous, message]);
-      console.warn('[v0] pasteExternalImagesAsLayers:', error);
+      if (!errors.length || !errors.join('\n').includes(message)) errors.push(message);
     } finally {
+      setLoadErrors(errors);
+      if (errors.length) toast({ title: 'Некоторые файлы не удалось вставить', description: errors.join('\n'), variant: 'destructive' });
       setLoadingFiles(false);
     }
-  }, [importImagesAsPages]);
+  }, []);
 
   const applyImageImportChoice = useCallback(async (
     destination: ImageImportDestination,
     pending: PendingImageImport,
   ) => {
     if (destination === 'page') await importImagesAsPages(pending.files);
-    else await importImagesAsLayers(pending.files);
+    else await importImagesAsLayers(pending.files, pending.documentId, pending.center);
   }, [importImagesAsLayers, importImagesAsPages]);
 
   const requestImageImport = useCallback((
     files: File[],
     source: PendingImageImport['source'],
-    options?: { forcePage?: boolean },
+    options?: { forcePage?: boolean; center?: { x: number; y: number } },
   ) => {
     if (files.length === 0) return;
     const state = useStore.getState();
@@ -3095,14 +3092,14 @@ export function CanvasArea() {
     const destination = resolveImageImportDestination({
       hasDocument,
       forcePage: options?.forcePage,
-      remembered: loadImageImportPreference(),
+      remembered: null,
     });
-    const pending = { files, source } satisfies PendingImageImport;
-    if (destination) void applyImageImportChoice(destination, pending);
-    else {
-      setRememberImportChoice(false);
-      setPendingImageImport(pending);
-    }
+    const pending = { files, source, documentId: hasDocument ? state.documents[state.activeDocIndex].id : undefined, center: options?.center } satisfies PendingImageImport;
+    imageImportQueue.current = imageImportQueue.current
+      .then(() => applyImageImportChoice(destination, pending))
+      .catch(error => {
+        toast({ title: 'Не удалось импортировать изображение', description: error instanceof Error ? error.message : 'Повторите попытку.', variant: 'destructive' });
+      });
   }, [applyImageImportChoice]);
 
   // Track Shift independently: ClipboardEvent does not expose modifier keys
@@ -3287,14 +3284,32 @@ export function CanvasArea() {
   return (
     <div
       ref={containerRef}
+      onDragEnter={event => {
+        if (Array.from(event.dataTransfer.types).includes('Files')) {
+          fileDragDepth.current++;
+          setDraggingFiles(true);
+        }
+      }}
+      onDragLeave={() => {
+        fileDragDepth.current = Math.max(0, fileDragDepth.current - 1);
+        if (fileDragDepth.current === 0) setDraggingFiles(false);
+      }}
       onDragOver={event => {
-        if (Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault();
+        if (Array.from(event.dataTransfer.types).includes('Files')) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+          setDragAsPage(event.shiftKey);
+        }
       }}
       onDrop={event => {
+        fileDragDepth.current = 0;
+        setDraggingFiles(false);
         const files = Array.from(event.dataTransfer.files);
         if (files.length === 0) return;
         event.preventDefault();
-        requestImageImport(files, 'drop');
+        const rect = event.currentTarget.getBoundingClientRect();
+        const point = screenToImage({ x: event.clientX - rect.left, y: event.clientY - rect.top }, { viewport, imageWidth: imgW, imageHeight: imgH });
+        requestImageImport(files, 'drop', { forcePage: event.shiftKey, center: point?.inside ? point : undefined });
       }}
       style={{
         flex: 1,
@@ -3309,6 +3324,7 @@ export function CanvasArea() {
         cursor: 'default',
       }}
     >
+      {draggingFiles && <div className="image-layer-drop-hint" role="status">{dragAsPage ? 'Отпустите, чтобы добавить страницу' : 'Отпустите, чтобы добавить слоем'}<span>PNG сохранит прозрачность · Shift — новая страница</span></div>}
       <ToolOptionsBar />
 
       {/* Navigation arrows */}
@@ -3388,14 +3404,14 @@ export function CanvasArea() {
           background: 'rgba(0,0,0,0.55)', color: 'var(--text-secondary)',
           cursor: 'pointer', backdropFilter: 'blur(4px)',
         }}>
-          + Добавить
+          + Новая страница
           <input
             type="file"
             multiple
             accept="image/jpeg,image/png,image/webp"
             style={{ display: 'none' }}
             onChange={async e => {
-              if (e.target.files) requestImageImport(Array.from(e.target.files), 'picker');
+              if (e.target.files) requestImageImport(Array.from(e.target.files), 'picker', { forcePage: true });
               e.target.value = '';
             }}
           />
@@ -3417,52 +3433,6 @@ export function CanvasArea() {
           >
             Закрыть
           </button>
-        </div>
-      )}
-
-      {pendingImageImport && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Как добавить изображение"
-          style={{
-            position: 'absolute', inset: 0, zIndex: 80,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(0,0,0,0.56)', padding: 20,
-          }}
-          onPointerDown={event => event.stopPropagation()}
-        >
-          <div style={{ width: 'min(430px, 100%)', borderRadius: 12, padding: 18, background: 'var(--bg-panel)', border: '1px solid var(--border-default)', boxShadow: '0 18px 60px rgba(0,0,0,.4)' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 7 }}>Как добавить изображение?</div>
-            <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
-              Новая страница сохраняет изображение отдельно. Слой помещает его поверх текущей страницы.
-            </div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              {([
-                ['page', 'Добавить как новую страницу'],
-                ['layer', 'Добавить как слой на текущую страницу'],
-              ] as const).map(([destination, label]) => (
-                <button
-                  key={destination}
-                  type="button"
-                  onClick={() => {
-                    const pending = pendingImageImport;
-                    setPendingImageImport(null);
-                    if (rememberImportChoice) storeImageImportPreference(destination);
-                    void applyImageImportChoice(destination, pending);
-                  }}
-                  style={{ border: destination === 'page' ? '1px solid var(--accent)' : '1px solid var(--border-default)', background: destination === 'page' ? 'var(--accent-dim)' : 'var(--bg-panel-raised)', color: 'var(--text-primary)', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left', fontSize: 13 }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 13, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={rememberImportChoice} onChange={event => setRememberImportChoice(event.target.checked)} />
-              Запомнить выбор
-            </label>
-            <button type="button" onClick={() => setPendingImageImport(null)} style={{ marginTop: 14, border: 0, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>Отмена</button>
-          </div>
         </div>
       )}
 
