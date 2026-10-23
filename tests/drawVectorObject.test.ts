@@ -3,6 +3,7 @@ import { drawBubbleToContext, drawShapeToContext } from '@/utils/drawVectorObjec
 import { createDefaultBubble } from '@/components/editor/panels/BubblePanel';
 import { createShapeFromSettings } from '@/utils/shapePresets';
 import type { ShapeSettings } from '@/types';
+import { getEditableShapePaths, moveShapePoint } from '@/utils/shapePoints';
 
 class FakePath2D {
   constructor(public data?: string) {}
@@ -66,6 +67,15 @@ beforeAll(() => {
 });
 
 describe('vector export renderer', () => {
+  it('exports the edited contour instead of the original shape preset', () => {
+    const shape = createShapeFromSettings('rect', { ...settings, cornerRadius: 0, glow: { ...settings.glow, enabled: false } });
+    shape.paths = moveShapePoint(getEditableShapePaths(shape, 1000, 800), { x: -0.5, y: -0.5 }, { x: -0.3, y: -0.1 });
+    const ctx = recordingContext();
+    const exportedPaths: string[] = [];
+    ctx.fill = (path?: FakePath2D) => exportedPaths.push(path?.data ?? '');
+    drawShapeToContext(ctx as unknown as CanvasRenderingContext2D, shape, 1000, 800);
+    expect(exportedPaths[0]).toContain('M -75 -16');
+  });
   it('uses gradients, glow passes, and dash styles for shapes', () => {
     const ctx = recordingContext();
     drawShapeToContext(ctx as unknown as CanvasRenderingContext2D, createShapeFromSettings('block-arrow', settings), 1000, 800);

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
+import { PanelLeft, PanelRight, Undo2, Redo2, Download } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useStore } from '@/store/useStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -41,6 +42,12 @@ const CanvasArea = dynamic(
 );
 
 export function EditorShell() {
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 1000px)').matches) setRightOpen(false);
+    if (window.matchMedia('(max-width: 700px)').matches) setLeftOpen(false);
+  }, []);
   const { undo, redo, setActiveTool, setLeftTab, selectedObject, deleteWatermark, deleteText, deleteTranslationMask, deleteShape, deleteBubble, deleteAiLayer, deleteMask, documents, activeDocIndex, fontsReady, setShowExportModal, activeTool } = useStore(useShallow(state => ({
     undo: state.undo,
     redo: state.redo,
@@ -153,6 +160,11 @@ export function EditorShell() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if ((e.key === 'Escape' || e.key === 'Enter') && useEditorUiStore.getState().shapePointEditingId) {
+        useEditorUiStore.getState().setShapePointEditingId(null);
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'Escape') {
         const ui = useEditorUiStore.getState();
         if (ui.dismissFloating()) { e.preventDefault(); e.stopImmediatePropagation(); return; }
@@ -259,6 +271,7 @@ export function EditorShell() {
         else {
           useEditorUiStore.getState().cancelActiveOperation();
           useEditorUiStore.getState().closeToolOptions();
+          useEditorUiStore.getState().setShapePointEditingId(null);
           setActiveTool(shortcut.tool);
           if (shortcut.tab) setLeftTab(shortcut.tab);
         }
@@ -333,6 +346,9 @@ export function EditorShell() {
 
   return (
     <div
+      className="editor-workspace"
+      data-left-open={leftOpen}
+      data-right-open={rightOpen}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -342,11 +358,17 @@ export function EditorShell() {
       }}
     >
       {/* Top bar */}
-      <TopBar />
+      <TopBar leftOpen={leftOpen} rightOpen={rightOpen} toggleLeft={() => {
+        if (!leftOpen && window.matchMedia('(max-width: 700px)').matches) setRightOpen(false);
+        setLeftOpen(value => !value);
+      }} toggleRight={() => {
+        if (!rightOpen && window.matchMedia('(max-width: 700px)').matches) setLeftOpen(false);
+        setRightOpen(value => !value);
+      }} />
       {/* Main area */}
       <div className="editor-main">
-        <LeftPanel />
         <ToolRail />
+        <LeftPanel />
         {fontsReady ? (
           <CanvasArea />
         ) : (
@@ -373,7 +395,7 @@ export function EditorShell() {
   );
 }
 
-function TopBar() {
+function TopBar({ leftOpen, rightOpen, toggleLeft, toggleRight }: { leftOpen: boolean; rightOpen: boolean; toggleLeft: () => void; toggleRight: () => void }) {
   const { documents, activeDocIndex, setShowExportModal, undo, redo } = useStore(useShallow(state => ({
     documents: state.documents,
     activeDocIndex: state.activeDocIndex,
@@ -384,7 +406,7 @@ function TopBar() {
   const activeDoc = activeDocIndex >= 0 ? documents[activeDocIndex] : null;
 
   return (
-    <header style={{ height: 52, background: 'var(--bg-panel)', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', padding: '0 12px', gap: 10, flexShrink: 0, zIndex: 50 }}>
+    <header className="editor-header" style={{ height: 64, background: 'var(--bg-panel)', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', padding: '0 18px', gap: 10, flexShrink: 0, zIndex: 50 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 190 }}>
         <svg width="24" height="24" viewBox="0 0 22 22" fill="none" aria-hidden="true">
           <rect width="22" height="22" rx="5" fill="var(--accent-dim)" />
@@ -402,15 +424,16 @@ function TopBar() {
       </div>
 
       <div style={{ display: 'flex', gap: 4, paddingLeft: 8, borderLeft: '1px solid var(--border-subtle)' }}>
-        <button className="ui-icon-button" onClick={undo} disabled={!activeDoc?.past.length} aria-label="Отменить действие" title="Отменить (Ctrl+Z)">↶</button>
-        <button className="ui-icon-button" onClick={redo} disabled={!activeDoc?.future.length} aria-label="Повторить действие" title="Повторить (Ctrl+Shift+Z)">↷</button>
+        <button className="ui-icon-button" onClick={undo} disabled={!activeDoc?.past.length} aria-label="Отменить действие" title="Отменить (Ctrl+Z)"><Undo2 size={17} /></button>
+        <button className="ui-icon-button" onClick={redo} disabled={!activeDoc?.future.length} aria-label="Повторить действие" title="Повторить (Ctrl+Shift+Z)"><Redo2 size={17} /></button>
       </div>
 
-      {activeDoc?.hasChanges && <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}><span style={{ color: 'var(--accent)' }}>●</span> Есть изменения</span>}
+      {activeDoc?.hasChanges && <span className="editor-save-status" style={{ fontSize: 11, color: 'var(--text-secondary)' }}><span style={{ color: 'var(--accent)' }}>●</span> Есть изменения</span>}
       <div style={{ flex: 1 }} />
+      <button className="ui-icon-button" onClick={toggleLeft} aria-pressed={leftOpen} aria-expanded={leftOpen} aria-controls="editor-properties" aria-label="Показать или скрыть инструменты" title="Инструменты"><PanelLeft size={18} /></button>
+      <button className="ui-icon-button" onClick={toggleRight} aria-pressed={rightOpen} aria-expanded={rightOpen} aria-controls="editor-pages" aria-label="Показать или скрыть страницы и слои" title="Страницы и слои"><PanelRight size={18} /></button>
       <button className="ui-button ui-button-primary" onClick={() => setShowExportModal(true)} disabled={!activeDoc} aria-label="Открыть экспорт">
-        Экспортировать
-        <span aria-hidden="true">→</span>
+        <Download size={16} aria-hidden="true" /><span>Экспорт</span>
       </button>
     </header>
   );

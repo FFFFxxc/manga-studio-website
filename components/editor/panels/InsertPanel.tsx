@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import { useEditorUiStore } from '@/store/useEditorUiStore';
 import { useStore } from '@/store/useStore';
 import { uid } from '@/utils/imageUtils';
 import type { ShapeKind, ShapeSettings, WatermarkObject } from '@/types';
@@ -42,12 +43,16 @@ export function InsertPanel() {
     selectedObject, setSelectedObject, pushHistory,
   } = useStore();
   const overlayInputRef = useRef<HTMLInputElement>(null);
+  const pointEditingId = useEditorUiStore(state => state.shapePointEditingId);
+  const setPointEditingId = useEditorUiStore(state => state.setShapePointEditingId);
 
   const hasDoc = activeDocIndex >= 0;
   const activeDoc = hasDoc ? documents[activeDocIndex] : null;
   const selectedShape = selectedObject?.type === 'shape' && activeDoc
     ? (activeDoc.shapes ?? []).find(shape => shape.id === selectedObject.id) ?? null
     : null;
+  useEffect(() => () => setPointEditingId(null), [selectedShape?.id, setPointEditingId]);
+  const editingPoints = Boolean(selectedShape && pointEditingId === selectedShape.id);
   const currentSettings: ShapeSettings = selectedShape ? {
     fill: selectedShape.fill,
     stroke: selectedShape.stroke,
@@ -105,14 +110,9 @@ export function InsertPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="section-label">Вставка</div>
-
       {/* Overlay image */}
-      <PanelSection title="Картинка поверх">
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          Вставьте изображение с компьютера поверх текущего — его можно двигать, масштабировать и вращать.
-        </div>
-        <PanelButton variant="primary" fullWidth onClick={() => overlayInputRef.current?.click()} disabled={!hasDoc}>
+      <PanelSection>
+        <PanelButton fullWidth onClick={() => overlayInputRef.current?.click()} disabled={!hasDoc}>
           + Вставить картинку
         </PanelButton>
         <input
@@ -127,20 +127,21 @@ export function InsertPanel() {
       <div className="divider" />
 
       {/* Shapes */}
-      <PanelSection title="Фигуры">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
-          {SHAPES.map(s => (
+      <PanelSection>
+        <div className="shape-picker" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
+          {SHAPES.filter(s => s.kind !== 'arrow').map(s => (
             <button
               key={s.kind}
               onClick={() => handleAddShape(s.kind)}
               disabled={!hasDoc}
               title={s.label}
+              aria-label={`Добавить: ${s.label}`}
               style={{
-                aspectRatio: '1',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                minHeight: 62,
+                display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center', justifyContent: 'center',
                 borderRadius: 6,
-                border: '1px solid var(--border-default)',
-                background: 'var(--bg-panel-raised)',
+                border: '1px solid transparent',
+                background: 'transparent',
                 color: hasDoc ? 'var(--text-secondary)' : 'var(--text-muted)',
                 cursor: hasDoc ? 'pointer' : 'not-allowed',
               }}
@@ -148,11 +149,13 @@ export function InsertPanel() {
               onMouseLeave={e => { e.currentTarget.style.color = hasDoc ? 'var(--text-secondary)' : 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border-default)'; }}
             >
               {s.icon}
+              <span style={{ fontSize: 11 }}>{s.label}</span>
             </button>
           ))}
         </div>
 
-        <PanelLabel style={{ marginTop: 6 }}>Стрелки и указатели</PanelLabel>
+        <details className="editor-disclosure">
+        <summary>Стрелки и указатели</summary>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
           {POINTER_PRESETS.map(preset => {
             const symbol: Record<string, string> = {
@@ -186,10 +189,29 @@ export function InsertPanel() {
             );
           })}
         </div>
+        </details>
+
+        <div className="editor-section-heading">{selectedShape ? 'Свойства фигуры' : 'Оформление новых фигур'}</div>
+        {selectedShape && <>
+          <button className={`ui-button ${editingPoints ? 'ui-button-primary' : 'ui-button-secondary'}`}
+            disabled={selectedShape.locked} aria-pressed={editingPoints}
+            onClick={() => {
+              useStore.getState().setActiveTool('select');
+              setPointEditingId(editingPoints ? null : selectedShape.id);
+            }}>
+            {editingPoints ? 'Готово · Enter' : 'Редактировать точки'}
+          </button>
+          {editingPoints && <p style={{ margin: 0, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            Перетаскивайте синие узлы контура. Жёлтые узлы меняют изгиб. Enter или Esc — закончить, Ctrl+Z — отменить перемещение.
+          </p>}
+          {selectedShape.paths && <button className="ui-button" disabled={selectedShape.locked}
+            onClick={() => updateShape(selectedShape.id, { paths: undefined }, { history: true })}>Сбросить контур</button>}
+        </>}
 
         <PanelRow label="Заливка">
           <input
             type="color"
+            aria-label="Цвет заливки фигуры"
             value={currentSettings.fill || '#ffffff'}
             onChange={e => updateCurrentSettings({
               fill: e.target.value,
@@ -217,6 +239,7 @@ export function InsertPanel() {
         <PanelRow label="Обводка">
           <input
             type="color"
+            aria-label="Цвет обводки фигуры"
             value={currentSettings.stroke || '#000000'}
             onChange={e => updateCurrentSettings({
               stroke: e.target.value,
@@ -226,6 +249,7 @@ export function InsertPanel() {
           />
           <input
             type="number"
+            aria-label="Толщина обводки фигуры"
             value={currentSettings.strokeWidth}
             min={0}
             max={60}
@@ -242,14 +266,16 @@ export function InsertPanel() {
           onChange={v => updateCurrentSettings({ opacity: v / 100 })}
         />
 
-        <PanelSlider
+        {!selectedShape?.paths && <PanelSlider
           label={`Скругление углов ${currentSettings.cornerRadius}px`}
           value={currentSettings.cornerRadius}
           min={0}
           max={120}
           onChange={v => updateCurrentSettings({ cornerRadius: v })}
-        />
+        />}
 
+        <details className="editor-disclosure">
+        <summary>Эффекты заливки</summary>
         <PaintEditor
           label="Стиль заливки"
           value={currentSettings.fillStyle}
@@ -262,16 +288,7 @@ export function InsertPanel() {
           onGlowChange={glow => updateCurrentSettings({ glow }, { history: false })}
         />
 
-        <PaintEditor
-          label="Стиль обводки"
-          value={currentSettings.strokeStyle}
-          allowRadial={false}
-          onGestureStart={selectedShape ? pushHistory : undefined}
-          onChange={paint => updateCurrentSettings({
-            strokeStyle: paint,
-            ...(paint.type === 'solid' ? { stroke: paint.color } : {}),
-          }, { history: false })}
-        />
+        </details>
 
         <div>
           <PanelLabel>Линия</PanelLabel>

@@ -10,7 +10,7 @@ import {
   normalizeGlowStyle,
   normalizeStrokePaintStyle,
 } from '@/utils/objectPaint';
-import { getShapeGeometry } from '@/utils/shapeGeometry';
+import { getObjectShapeGeometry } from '@/utils/shapePoints';
 import { isOpenShape } from '@/utils/shapePresets';
 
 interface LocalBounds {
@@ -100,13 +100,7 @@ function drawPaintedPath(
 }
 
 function shapePaths(shape: ShapeObject, width: number, height: number) {
-  return getShapeGeometry(
-    shape.kind,
-    width,
-    height,
-    shape.curve ?? 0.35,
-    shape.cornerRadius,
-  );
+  return getObjectShapeGeometry(shape, width, height);
 }
 
 export function drawShapeToContext(

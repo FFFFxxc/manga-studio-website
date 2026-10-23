@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TextPanel } from '@/components/editor/panels/TextPanel';
 import { createBaseLayerState } from '@/types';
 import type { ImageDocument, TextObject } from '@/types';
@@ -22,6 +22,7 @@ function makeDocument(): ImageDocument {
 }
 
 describe('TextPanel color commit', () => {
+  afterEach(cleanup);
   beforeEach(() => {
     localStorage.clear();
     useStore.setState({
@@ -49,11 +50,23 @@ describe('TextPanel color commit', () => {
   it('offers a gradient fill for selected text without enabling its outline', () => {
     render(<TextPanel />);
 
+    // Gradients are available for the fill only; the outline is a single color.
+    expect(screen.getAllByRole('button', { name: 'Линейный' })).toHaveLength(1);
+
     fireEvent.click(screen.getAllByRole('button', { name: 'Линейный' })[0]);
 
     const updated = useStore.getState().documents[0].texts[0];
     expect(updated.fillStyle?.type).toBe('linear');
     expect(updated.strokeWidth).toBe(0);
     expect(useStore.getState().documents[0].past).toHaveLength(1);
+  });
+
+  it('changes the outline to a solid color and supports undo', () => {
+    render(<TextPanel />);
+    fireEvent.change(screen.getByLabelText('Цвет обводки'), { target: { value: '#ff0000' } });
+    expect(useStore.getState().documents[0].texts[0].strokeStyle).toEqual({ type: 'solid', color: '#ff0000' });
+    expect(useStore.getState().documents[0].texts[0].stroke).toBe('#ff0000');
+    act(() => useStore.getState().undo());
+    expect(useStore.getState().documents[0].texts[0].stroke).toBe('');
   });
 });

@@ -180,8 +180,6 @@ export function CleanupPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="section-label">Очистка текста</div>
-
       {/* Mode tabs */}
       <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
         {([
@@ -329,8 +327,9 @@ export function CleanupPanel() {
         </>
       )}
 
-      <div className="divider" />
-      <div className="section-label">Перевод</div>
+      <details className="editor-disclosure" open={Boolean(translationOperation) || Boolean(translationDraft) || undefined}>
+      <summary>Перевести выделенный фрагмент</summary>
+      <div className="editor-disclosure-content">
       <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         Выделите бабл маской, чтобы отправить только его фрагмент в RouterAI.
       </div>
@@ -490,8 +489,11 @@ export function CleanupPanel() {
         </div>
       )}
 
-      <div className="divider" />
-      <div className="section-label">Маска и удаление</div>
+      </div>
+      </details>
+      <details className="editor-disclosure" open={Boolean(aiOperation) || activeTool === 'maskBrush' || undefined}>
+      <summary>Маски и удаление объектов</summary>
+      <div className="editor-disclosure-content">
       <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
         {activeMask ? `Активна: ${activeMask.name} · ${activeMask.strokes.length} штр.` : 'Создайте маску и закрасьте объект оранжевой кистью.'}
       </div>
@@ -540,6 +542,8 @@ export function CleanupPanel() {
       >
         {aiOperation === 'background' ? 'Удаляем фон…' : 'Удалить фон'}
       </button>
+      </div>
+      </details>
       {(aiOperation || translationOperation) && (
         <button type="button" onClick={() => abortRef.current?.abort()} style={secondaryButtonStyle}>
           Отменить запрос

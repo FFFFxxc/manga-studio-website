@@ -31,6 +31,8 @@ export interface ToolOptionsRequest {
 }
 
 interface EditorUiState {
+  shapePointEditingId: string | null;
+  setShapePointEditingId: (id: string | null) => void;
   activeOperation: ActiveEditorOperation | null;
   /** Selected raster layer whose perspective corner is actively being dragged. */
   perspectiveDragLayerKey: string | null;
@@ -48,6 +50,8 @@ interface EditorUiState {
 }
 
 export const useEditorUiStore = create<EditorUiState>((set, get) => ({
+  shapePointEditingId: null,
+  setShapePointEditingId: shapePointEditingId => set({ shapePointEditingId }),
   activeOperation: null,
   perspectiveDragLayerKey: null,
   toolOptions: null,
@@ -91,7 +95,7 @@ export const useEditorUiStore = create<EditorUiState>((set, get) => ({
     dismiss();
     return true;
   },
-  clearTransientUi: () => set({ toolOptions: null, floatingDismiss: null, perspectiveDragLayerKey: null }),
+  clearTransientUi: () => set({ toolOptions: null, floatingDismiss: null, perspectiveDragLayerKey: null, shapePointEditingId: null }),
 }));
 
 export function beginEditorOperation(

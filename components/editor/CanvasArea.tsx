@@ -25,8 +25,9 @@ import { drawPerspectiveImage, isValidPerspectiveQuad } from '@/utils/perspectiv
 import {
   getCurvedArrowCurveFromHandle,
   getCurvedArrowHandlePosition,
-  getShapeGeometry,
 } from '@/utils/shapeGeometry';
+import { getEditableShapePaths, getObjectShapeGeometry } from '@/utils/shapePoints';
+import { ShapePointHandles } from './ShapePointHandles';
 import {
   createTextNodeConfig,
   isParagraphGlyphScaleGesture,
@@ -942,13 +943,16 @@ function ShapeNode({
 }) {
   const nodeRef = useRef<Konva.Group>(null);
   const trRef = useRef<Konva.Transformer>(null);
+  const pointEditingId = useEditorUiStore(state => state.shapePointEditingId);
+  const viewportScale = useStore(state => state.viewport.scale);
+  const editingPoints = isSelected && !shape.locked && pointEditingId === shape.id;
 
   useEffect(() => {
-    if (isSelected && !shape.locked && trRef.current && nodeRef.current) {
+    if (isSelected && !shape.locked && !editingPoints && trRef.current && nodeRef.current) {
       trRef.current.nodes([nodeRef.current]);
       trRef.current.getLayer()?.batchDraw();
     }
-  }, [isSelected, shape.locked]);
+  }, [isSelected, shape.locked, editingPoints]);
 
   const pW = docWidth * previewScale;
   const pH = docHeight * previewScale;
@@ -989,7 +993,7 @@ function ShapeNode({
     scaleX: shape.scaleX,
     scaleY: shape.scaleY,
     opacity: shape.opacity,
-    draggable: !shape.locked,
+    draggable: !shape.locked && !editingPoints,
     onClick: onSelect,
     onTap: onSelect,
     onDragStart: shape.locked ? undefined : onBeforeChange,
@@ -1008,13 +1012,7 @@ function ShapeNode({
     : shape.lineStyle === 'dotted'
       ? [2 * previewScale, 7 * previewScale]
       : undefined;
-  const geometry = getShapeGeometry(
-    shape.kind,
-    w,
-    h,
-    shape.curve ?? 0.35,
-    shape.cornerRadius * previewScale,
-  );
+  const geometry = getObjectShapeGeometry(shape, w, h, previewScale);
   const open = isOpenShape(shape.kind);
   const node = (
     <>
@@ -1062,7 +1060,12 @@ function ShapeNode({
       <Group ref={nodeRef} {...groupProps}>
         {node}
       </Group>
-      {isSelected && !shape.locked && shape.kind === 'curved-arrow' && (
+      {editingPoints && <Group x={cx} y={cy} rotation={shape.rotation} scaleX={shape.scaleX} scaleY={shape.scaleY}>
+        <ShapePointHandles paths={getEditableShapePaths(shape, docWidth, docHeight)} width={w} height={h}
+          handleScale={Math.max(0.01, viewportScale * Math.min(Math.abs(shape.scaleX), Math.abs(shape.scaleY)))}
+          onBeforeChange={onBeforeChange} onChange={paths => onChange({ paths })} />
+      </Group>}
+      {isSelected && !shape.locked && !editingPoints && !shape.paths && shape.kind === 'curved-arrow' && (
         <Circle
           x={curveHandle.x}
           y={curveHandle.y}
@@ -1092,7 +1095,7 @@ function ShapeNode({
           onClick={event => { event.cancelBubble = true; }}
         />
       )}
-      {isSelected && !shape.locked && (
+      {isSelected && !shape.locked && !editingPoints && (
         <Transformer
           ref={trRef}
           boundBoxFunc={(oldBox, newBox) => {

@@ -147,6 +147,17 @@ export interface GradientPreset {
   builtIn?: boolean;
 }
 
+export interface ShapePathCommand {
+  command: 'M' | 'L' | 'Q' | 'C' | 'Z';
+  /** Local coordinates relative to the shape width and height, centered at 0. */
+  points: number[];
+}
+
+export interface EditableShapePaths {
+  fillPath?: ShapePathCommand[];
+  strokePath?: ShapePathCommand[];
+}
+
 export interface ShapeObject {
   id: string;
   kind: ShapeKind;
@@ -169,6 +180,7 @@ export interface ShapeObject {
   glow?: GlowStyle;
   lineStyle?: 'solid' | 'dashed' | 'dotted';
   curve?: number;
+  paths?: EditableShapePaths;
 }
 
 export type BubbleKind =

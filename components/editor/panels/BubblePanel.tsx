@@ -140,10 +140,10 @@ function BubblePreview({ def, active, onClick }: { def: PreviewDef; active: bool
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
         padding: '5px 3px',
-        background: active ? 'var(--accent-dim)' : 'var(--bg-panel-raised)',
-        border: active ? '1.5px solid var(--accent)' : '1px solid var(--border-default)',
+        background: active ? 'var(--accent-dim)' : 'transparent',
+        border: '1px solid transparent',
         borderRadius: 6, cursor: 'pointer', transition: 'border-color 0.12s',
-        minWidth: W + 8,
+        minWidth: 0, width: '100%',
       }}
     >
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
@@ -160,7 +160,7 @@ function BubblePreview({ def, active, onClick }: { def: PreviewDef; active: bool
           ))}
         </g>
       </svg>
-      <span style={{ fontSize: 9, color: 'var(--text-secondary)', fontWeight: 500 }}>{def.label}</span>
+      <span style={{ fontSize: 12, color: active ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: 500 }}>{def.label}</span>
     </button>
   );
 }
@@ -252,14 +252,14 @@ export function BubblePanel() {
 
       {/* ── Type cards ────────────────────────────────────────────────── */}
       <div>
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, padding: '0 2px 6px' }}>Тип бабла</div>
+        <div className="editor-section-heading">{selectedBubble ? 'Изменить форму' : 'Добавить бабл'}</div>
         {[
           { label: 'Классические', items: BUBBLE_PRESETS.slice(0, 5) },
           { label: 'Декоративные', items: BUBBLE_PRESETS.slice(5) },
         ].map(group => (
-          <div key={group.label} style={{ marginBottom: 7 }}>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 4 }}>{group.label}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          <details key={group.label} className="editor-disclosure" open={group.label === 'Классические' ? true : undefined}>
+            <summary>{group.label === 'Классические' ? 'Основные формы' : 'Другие формы'}</summary>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 4 }}>
               {group.items.map(def => (
                 <BubblePreview
                   key={def.kind}
@@ -276,7 +276,7 @@ export function BubblePanel() {
                 />
               ))}
             </div>
-          </div>
+          </details>
         ))}
         {!selectedBubble && (
           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, padding: '0 2px' }}>
@@ -287,17 +287,19 @@ export function BubblePanel() {
 
       {selectedBubble && (
         <>
+          <button className="ui-button ui-button-secondary" onClick={() => createBubble(selectedBubble.kind)}>+ Ещё один бабл</button>
           {/* ── Text content ───────────────────────────────────────────── */}
           <div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, padding: '2px 2px 4px' }}>Текст</div>
             <textarea
               value={selectedBubble.text.content}
+              aria-label="Текст бабла"
               onChange={e => updateBubble(selectedBubble.id, { text: { ...selectedBubble.text, content: e.target.value } })}
               style={{
                 width: '100%', height: 60, padding: 6, fontSize: 11,
                 borderRadius: 4, border: '1px solid var(--border-default)',
                 fontFamily: selectedBubble.text.fontFamily, resize: 'vertical',
-                background: 'var(--bg-input)', color: 'var(--text-primary)',
+                background: 'var(--bg-panel-raised)', color: 'var(--text-primary)',
               }}
               placeholder="Введите текст бабла"
             />
@@ -309,6 +311,7 @@ export function BubblePanel() {
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Заливка</span>
               <input
                 type="color"
+                aria-label="Цвет заливки бабла"
                 value={selectedBubble.fill}
                 onChange={e => updateBubble(selectedBubble.id, {
                   fill: e.target.value,
@@ -321,6 +324,7 @@ export function BubblePanel() {
               <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Обводка</span>
               <input
                 type="color"
+                aria-label="Цвет обводки бабла"
                 value={selectedBubble.stroke}
                 onChange={e => updateBubble(selectedBubble.id, {
                   stroke: e.target.value,
@@ -331,7 +335,8 @@ export function BubblePanel() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <details className="editor-disclosure">
+            <summary>Эффекты заливки</summary>
             <PaintEditor
               label="Стиль заливки"
               value={selectedBubble.fillStyle ?? { type: 'solid', color: selectedBubble.fill }}
@@ -343,17 +348,7 @@ export function BubblePanel() {
               }, { history: false })}
               onGlowChange={glow => updateBubble(selectedBubble.id, { glow }, { history: false })}
             />
-            <PaintEditor
-              label="Стиль обводки"
-              value={selectedBubble.strokeStyle ?? { type: 'solid', color: selectedBubble.stroke }}
-              allowRadial={false}
-              onGestureStart={pushHistory}
-              onChange={style => updateBubble(selectedBubble.id, {
-                strokeStyle: style,
-                ...(style.type === 'solid' ? { stroke: style.color } : {}),
-              }, { history: false })}
-            />
-          </div>
+          </details>
 
           <SliderRow
             label="Толщина обводки"
@@ -409,7 +404,8 @@ export function BubblePanel() {
 
           {/* ── Tail settings ───────────────────────────────────────────── */}
           {bubbleSupportsTail(selectedBubble.kind) && (
-            <div>
+            <details className="editor-disclosure">
+              <summary>Хвост реплики</summary>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 2px 6px' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}>Хвост</div>
                 <div style={{ display: 'flex', gap: 4 }}>
@@ -493,7 +489,7 @@ export function BubblePanel() {
                   )}
                 </>
               )}
-            </div>
+            </details>
           )}
 
           {/* ── Fit to text ─────────────────────────────────────────────── */}
