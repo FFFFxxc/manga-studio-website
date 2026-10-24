@@ -6,6 +6,7 @@ import { useStore } from '@/store/useStore';
 import { aiCleanupMaskedArea, deleteMaskedPixels, fillMaskedArea, hasActiveSelection, inpaintMaskedArea } from '@/utils/layerActions';
 import { EditorSlider } from './EditorSlider';
 import type { SelectionMode } from '@/types';
+import { BRUSH_PRESETS } from '@/utils/brushPresets';
 
 const toolTitles: Record<string, string> = {
   eraser: 'Ластик', maskBrush: 'Маска', brush: 'Кисть', select: 'Выделение объектов',
@@ -50,8 +51,12 @@ export function ToolOptionsBar() {
   };
 
   return (
-    <div className="tool-options" aria-label="Параметры активного инструмента" style={{ pointerEvents: 'auto', zIndex: 40, flexWrap: activeTool === 'eraser' ? 'wrap' : undefined }} onMouseDown={event => event.stopPropagation()}>
+    <div className="tool-options" aria-label="Параметры активного инструмента" style={{ pointerEvents: 'auto', zIndex: 40, flexWrap: activeTool === 'eraser' || activeTool === 'brush' ? 'wrap' : undefined }} onMouseDown={event => event.stopPropagation()}>
       <strong>{toolTitles[activeTool] ?? 'Инструмент'}</strong>
+      {activeTool === 'brush' && <select aria-label="Форма кисти" style={{ width: 110, flexShrink: 0 }} value={cleanupSettings.brushPreset ?? 'round'}
+        onChange={event => updateCleanupSettings({ brushPreset: event.target.value as NonNullable<typeof cleanupSettings.brushPreset> })}>
+        {BRUSH_PRESETS.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+      </select>}
       {isMarking && <>
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           Размер

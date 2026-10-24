@@ -66,6 +66,7 @@ export function resolveEditorShortcut(
     Digit4: 'insert',
     Digit5: 'transform',
     Digit6: 'bubble',
+    Digit7: 'stickers',
   };
   const tab = tabs[event.code] ?? tabs[`Digit${event.key}`];
   return tab ? { type: 'tab', tab } : null;

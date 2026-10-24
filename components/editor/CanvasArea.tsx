@@ -95,6 +95,7 @@ interface TextPointerGesture {
 }
 
 interface BrushGestureSettings {
+  brushPreset?: StrokeData['brushPreset'];
   size: number;
   hardness: number;
   color: string;
@@ -1770,6 +1771,7 @@ export function CanvasArea() {
       color: gestureSettings.color,
       opacity: 1,
       hardness: gestureSettings.hardness,
+      brushPreset: gestureSettings.brushPreset,
       mode: gestureSettings.mode,
       purpose: gestureSettings.purpose,
     }, imgW, imgH, {
@@ -2629,6 +2631,7 @@ export function CanvasArea() {
       const imgX = imagePoint.x * imgW;
       const imgY = imagePoint.y * imgH;
       brushGestureSettingsRef.current = {
+        brushPreset: activeTool === 'brush' ? cleanupSettings.brushPreset ?? 'round' : 'round',
         size: cleanupSettings.brushSize,
         hardness: cleanupSettings.brushHardness,
         color: cleanupSettings.brushColor,
@@ -2872,6 +2875,7 @@ export function CanvasArea() {
           color: gestureSettings.color,
           opacity: gestureSettings.opacity,
           hardness: gestureSettings.hardness,
+          brushPreset: gestureSettings.brushPreset,
           mode: gestureSettings.mode,
           purpose: gestureSettings.purpose,
         };
