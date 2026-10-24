@@ -136,6 +136,12 @@ function renderAffineEraserMaskToRaster(options: EraserRasterOptions): PixelRect
 
   const workingContext = context2d(working);
   workingContext.save();
+  // `copy` clears every pixel in the current clip, even outside drawImage's
+  // destination rectangle. Limit it before restoring this stroke's region;
+  // otherwise the live layer collapses to a square around the brush.
+  workingContext.beginPath();
+  workingContext.rect(localBounds.x, localBounds.y, localBounds.width, localBounds.height);
+  workingContext.clip();
   workingContext.globalCompositeOperation = 'copy';
   workingContext.drawImage(
     original,

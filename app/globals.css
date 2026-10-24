@@ -372,6 +372,8 @@ select, input[type="text"], input[type="number"], textarea { min-height: 36px; }
 .editor-disclosure[open] > summary::after { content: '−'; }
 .editor-disclosure-content { display: flex; flex-direction: column; gap: 12px; }
 .editor-properties { font-size: 12px; line-height: 1.5; }
+.image-layer-drop-hint { position: absolute; inset: 10px; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 2px dashed var(--accent); border-radius: 8px; background: #15191ee6; color: var(--text-primary); font-size: 17px; font-weight: 600; text-align: center; pointer-events: none; }
+.image-layer-drop-hint span { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
 .editor-properties .divider { margin: 6px 0; }
 .editor-workspace[data-left-open="false"] .editor-sidebar,
 .editor-workspace[data-right-open="false"] .editor-sidebar-right { display: none !important; }
@@ -421,6 +423,7 @@ select, input[type="text"], input[type="number"], textarea { min-height: 36px; }
   .editor-header .ui-icon-button { width: 30px; }
   .editor-header .ui-button { padding-inline: 8px; }
   .editor-header .ui-button span { display: none; }
+  .editor-header .layer-import-button span { display: none; }
   .editor-sidebar { position: absolute; top: 0; bottom: 68px; left: 0; width: min(292px, 85vw); box-shadow: 8px 0 24px #0005; z-index: 30; }
   .editor-sidebar-right { position: absolute; top: 0; bottom: 68px; right: 0; width: 220px; box-shadow: -8px 0 24px #0005; z-index: 31; }
 }

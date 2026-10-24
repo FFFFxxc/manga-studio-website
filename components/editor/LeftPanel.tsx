@@ -16,7 +16,7 @@ const TABS: Array<{ key: LeftTab; label: string; hotkey: string; icon: typeof Br
   { key: 'cleanup', label: 'Очистка', hotkey: '2', icon: Brush, hint: 'Уберите исходный текст и исправьте фон.' },
   { key: 'text', label: 'Текст', hotkey: '3', icon: Type, hint: 'Добавьте перевод или измените выбранную надпись.' },
   { key: 'bubble', label: 'Баблы', hotkey: '6', icon: MessageCircle, hint: 'Добавьте реплику и настройте её форму.' },
-  { key: 'insert', label: 'Фигуры', hotkey: '4', icon: Shapes, hint: 'Добавьте фигуру, стрелку или изображение.' },
+  { key: 'insert', label: 'Фигуры', hotkey: '4', icon: Shapes, hint: 'Добавьте фигуру или стрелку. Изображения вставляются кнопкой в верхней панели.' },
   { key: 'watermark', label: 'Водяной знак', hotkey: '1', icon: Stamp, hint: 'Поставьте подпись или логотип на страницы.' },
   { key: 'transform', label: 'Размер и обрезка', hotkey: '5', icon: Crop, hint: 'Измените размер или обрежьте страницу.' },
 ];

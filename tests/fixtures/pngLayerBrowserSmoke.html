@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8" />
+<title>PNG layer import regression</title>
+<style>body{font:15px system-ui;background:#191c21;color:#ddd;padding:28px}img{width:480px;image-rendering:pixelated}pre{font-size:13px}</style>
+<h1>PNG: прозрачность и вставка слоем</h1><pre id="result">Проверка…</pre><div id="preview"></div>
+<script type="module">
+  import { runPngLayerBrowserSmoke } from './pngLayerBrowserSmoke.ts';
+  const output = document.querySelector('#result');
+  try {
+    const result = await runPngLayerBrowserSmoke();
+    output.dataset.status = 'passed';
+    const {preview, ...stats} = result;
+    output.textContent = `PASS\n${JSON.stringify(stats,null,2)}`;
+    const image = document.createElement('img'); image.src = preview; image.alt = 'PNG с прозрачным отверстием и полупрозрачным краем поверх страницы';
+    document.querySelector('#preview').append(image);
+  } catch(error) { output.dataset.status = 'failed'; output.textContent = `FAIL\n${error.stack ?? error}`; throw error; }
+</script></html>

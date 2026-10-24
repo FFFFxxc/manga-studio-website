@@ -5,6 +5,11 @@ import {
 } from '@/utils/pastedImageLayers';
 
 describe('clipboard paste routing', () => {
+  it('recognizes PNG files from clipboard providers that omit the MIME type', () => {
+    const png = new File(['png'], 'overlay.PNG');
+    expect(extractClipboardImageFiles({ files: [png], items: [] } as unknown as DataTransfer)).toEqual([png]);
+    expect(extractClipboardImageFiles({ files: [], items: [{ kind: 'file', type: '', getAsFile: () => png }] } as unknown as DataTransfer)).toEqual([png]);
+  });
   it('keeps native paste in text-editable elements', () => {
     for (const tag of ['input', 'textarea', 'select']) {
       expect(shouldKeepNativePaste(document.createElement(tag))).toBe(true);

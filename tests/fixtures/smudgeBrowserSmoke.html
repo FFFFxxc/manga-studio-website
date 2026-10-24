@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8" />
+<title>Smudge pixel regression</title>
+<style>body{background:#17191d;color:#ddd;font:16px system-ui;padding:24px}section{display:flex;gap:24px;flex-wrap:wrap}figure{margin:0}img{width:480px;max-width:100%;background:#fff}figcaption{margin:12px 0;color:#aaa}</style>
+<h1>Палец: проверка штриха</h1>
+<pre id="result">Проверка…</pre>
+<section id="images"></section>
+<script type="module">
+  import { runSmudgeBrowserSmoke } from './smudgeBrowserSmoke.ts';
+  const result = document.querySelector('#result');
+  try {
+    const comparison = await runSmudgeBrowserSmoke();
+    result.dataset.status = 'passed';
+    result.textContent = `PASS\n${JSON.stringify({differingChannels: comparison.differingChannels, sampleAllDifferingChannels: comparison.sampleAllDifferingChannels, changedChannels: comparison.changedChannels, maxAlpha: comparison.maxAlpha}, null, 2)}`;
+    for (const [label, src] of [['До',comparison.before],['После замкнутого штриха',comparison.after]]) {
+      const figure = document.createElement('figure');
+      const image = document.createElement('img'); image.src = src;
+      const caption = document.createElement('figcaption'); caption.textContent = label;
+      figure.append(image,caption); document.querySelector('#images').append(figure);
+    }
+  } catch(error) { result.dataset.status = 'failed'; result.textContent = `FAIL\n${error.stack ?? error}`; throw error; }
+</script>
+</html>

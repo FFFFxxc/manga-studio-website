@@ -34,6 +34,9 @@ export function ToolOptionsBar() {
 
   if (!doc) return null;
   const selectionActive = hasActiveSelection(doc);
+  const sizeUnits = activeTool === 'eraser' ? doc.height : 1000;
+  const minSize = activeTool === 'eraser' ? 1 : 3;
+  const maxSize = activeTool === 'eraser' ? Math.max(1, Math.round(doc.height * 0.2)) : 200;
 
   const runAction = async (key: string, action: () => Promise<void>) => {
     setRunning(key);
@@ -47,20 +50,21 @@ export function ToolOptionsBar() {
   };
 
   return (
-    <div className="tool-options" aria-label="Параметры активного инструмента" style={{ pointerEvents: 'auto', zIndex: 40 }} onMouseDown={event => event.stopPropagation()}>
+    <div className="tool-options" aria-label="Параметры активного инструмента" style={{ pointerEvents: 'auto', zIndex: 40, flexWrap: activeTool === 'eraser' ? 'wrap' : undefined }} onMouseDown={event => event.stopPropagation()}>
       <strong>{toolTitles[activeTool] ?? 'Инструмент'}</strong>
       {isMarking && <>
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           Размер
-          <EditorSlider label="Размер кисти" min={3} max={200} step={1}
-            value={Math.round(cleanupSettings.brushSize * 1000)}
-            onChange={v => updateCleanupSettings({ brushSize: v / 1000 })}
+          <EditorSlider label="Размер кисти" min={minSize} max={maxSize} step={1}
+            value={Math.max(minSize, Math.round(cleanupSettings.brushSize * sizeUnits))}
+            onChange={v => updateCleanupSettings({ brushSize: v / sizeUnits })}
             style={{ width: 120 }}
           />
-          <input className="tool-number" aria-label="Размер инструмента" type="number" min="3" max="200"
-            value={Math.round(cleanupSettings.brushSize * 1000)}
-            onChange={e => updateCleanupSettings({ brushSize: Math.max(3, Math.min(200, Number(e.target.value))) / 1000 })}
+          <input className="tool-number" aria-label="Размер инструмента" type="number" min={minSize} max={maxSize}
+            value={Math.max(minSize, Math.round(cleanupSettings.brushSize * sizeUnits))}
+            onChange={e => updateCleanupSettings({ brushSize: Math.max(minSize, Math.min(maxSize, Number(e.target.value))) / sizeUnits })}
           />
+          {activeTool === 'eraser' && <span>px</span>}
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           Жёсткость
@@ -86,6 +90,16 @@ export function ToolOptionsBar() {
           <span>%</span>
         </label>
         {activeTool === 'brush' && <input aria-label="Цвет кисти" title="Основной цвет" type="color" value={cleanupSettings.brushColor} onChange={event => setForegroundColor(event.target.value)} onMouseDown={event => event.stopPropagation()} style={{ width: 30, height: 26, cursor: 'pointer', pointerEvents: 'auto' }} />}
+        {activeTool === 'eraser' && <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="100% полностью стирает центр кисти; меньше — стирает частично">
+            Непрозрачность
+            <EditorSlider label="Непрозрачность ластика" min={1} max={100} step={1}
+              value={Math.round(cleanupSettings.brushOpacity * 100)}
+              onChange={value => updateCleanupSettings({ brushOpacity: value / 100 })} style={{ width: 70 }} />
+            <span>{Math.round(cleanupSettings.brushOpacity * 100)}%</span>
+          </label>
+          <span title="Низкая жёсткость — мягкий край, 100% — чёткий круг">Стирает выбранный слой · [ ] — размер</span>
+        </>}
       </>}
       {isEffect && <>
         <select aria-label="Растровый эффект" value={blurSettings.mode} onChange={event => updateBlurSettings({ mode: event.target.value as typeof blurSettings.mode })}>

@@ -10,6 +10,7 @@ import { LeftPanel } from './LeftPanel';
 import { ToolRail } from './ToolRail';
 import { RightPanel } from './RightPanel';
 import { ExportModal } from './ExportModal';
+import { ImageLayerImportButton } from './ImageLayerImportButton';
 import { Toaster } from '@/components/ui/toaster';
 import { toast } from '@/hooks/use-toast';
 import { resolveDeleteTarget, resolveEditableTargetShortcut, resolveEditorShortcut } from '@/utils/editorShortcuts';
@@ -430,6 +431,7 @@ function TopBar({ leftOpen, rightOpen, toggleLeft, toggleRight }: { leftOpen: bo
 
       {activeDoc?.hasChanges && <span className="editor-save-status" style={{ fontSize: 11, color: 'var(--text-secondary)' }}><span style={{ color: 'var(--accent)' }}>●</span> Есть изменения</span>}
       <div style={{ flex: 1 }} />
+      <ImageLayerImportButton />
       <button className="ui-icon-button" onClick={toggleLeft} aria-pressed={leftOpen} aria-expanded={leftOpen} aria-controls="editor-properties" aria-label="Показать или скрыть инструменты" title="Инструменты"><PanelLeft size={18} /></button>
       <button className="ui-icon-button" onClick={toggleRight} aria-pressed={rightOpen} aria-expanded={rightOpen} aria-controls="editor-pages" aria-label="Показать или скрыть страницы и слои" title="Страницы и слои"><PanelRight size={18} /></button>
       <button className="ui-button ui-button-primary" onClick={() => setShowExportModal(true)} disabled={!activeDoc} aria-label="Открыть экспорт">

@@ -9,13 +9,14 @@ import {
 } from '@/utils/cleanupRaster';
 import { renderDocumentToCanvas } from '@/utils/documentComposite';
 import {
-  blendPixel,
+  createRasterPointMapper,
   localBoundsForDocumentRect,
-  mapDocumentPointToRasterPoint,
   mapRasterPointToDocumentPoint,
 } from '@/utils/cloneStamp';
 import type { PixelRect, RasterEffectPreview, RasterEffectSession, RasterEffectTarget } from '@/utils/rasterEffectSession';
 import { canvasToPersistentDataUrl, registerRuntimeRasterSource } from '@/utils/runtimeRasterSources';
+import { mixPremultipliedPixel, samplePremultipliedBilinear } from '@/utils/rasterSampling';
+import { createSmudgeDabSampler, type SmudgeDab } from '@/utils/smudgeDabs';
 
 type RasterPlacement = Partial<LayerTransform> & {
   crop?: CropRect | null;
@@ -55,15 +56,15 @@ export function renderSmudgeSegment(
   const hard = clamp(settings.hardness, 0, 1);
   const deltaX = to.x - from.x;
   const deltaY = to.y - from.y;
+  const sample = new Float64Array(4);
   for (let y = 0; y < bounds.height; y++) for (let x = 0; x < bounds.width; x++) {
     const documentX = bounds.x + x;
     const documentY = bounds.y + y;
     const distance = Math.hypot(documentX + 0.5 - to.x, documentY + 0.5 - to.y) / radius;
     if (distance > 1) continue;
     const edge = hard >= 1 || distance <= hard ? 1 : (1 - distance) / Math.max(0.001, 1 - hard);
-    const sampleX = clamp(Math.round(documentX - deltaX), 0, source.width - 1);
-    const sampleY = clamp(Math.round(documentY - deltaY), 0, source.height - 1);
-    blendPixel(result.data, (y * bounds.width + x) * 4, pixels, (sampleY * source.width + sampleX) * 4, edge * clamp(settings.strength, 0, 1));
+    samplePremultipliedBilinear(pixels, source.width, source.height, documentX - deltaX, documentY - deltaY, sample);
+    mixPremultipliedPixel(result.data, (y * bounds.width + x) * 4, sample, edge * clamp(settings.strength, 0, 1));
   }
   outputContext.putImageData(result, bounds.x, bounds.y);
   return output;
@@ -135,11 +136,13 @@ function maskAmount(
   return amount;
 }
 
-function renderSmudgeOnLayer(options: {
+export function renderSmudgeOnLayer(options: {
   working: HTMLCanvasElement;
   placement: RasterPlacement;
   documentBounds: PixelRect;
-  segmentMask: HTMLCanvasElement;
+  size: number;
+  hardness: number;
+  mapper?: ReturnType<typeof createRasterPointMapper>;
   selectionPixels: Uint8ClampedArray | null;
   sampleAllPixels: Uint8ClampedArray | null;
   from: { x: number; y: number };
@@ -150,7 +153,7 @@ function renderSmudgeOnLayer(options: {
   const width = working.width;
   const height = working.height;
   const destinationBounds = localBoundsForDocumentRect(documentBounds, placement, width, height);
-  if (!destinationBounds) return null;
+  if (!destinationBounds || destinationBounds.width < 1 || destinationBounds.height < 1) return null;
   const delta = { x: to.x - from.x, y: to.y - from.y };
   const sourceDocumentBounds = {
     x: documentBounds.x - delta.x * width,
@@ -164,36 +167,65 @@ function renderSmudgeOnLayer(options: {
   if (!context) throw new Error('Canvas недоступен.');
   const snapshot = context.getImageData(readBounds.x, readBounds.y, readBounds.width, readBounds.height);
   const output = context.getImageData(destinationBounds.x, destinationBounds.y, destinationBounds.width, destinationBounds.height);
-  const mask = maskPatch(options.segmentMask, documentBounds);
   const strength = clamp(options.strength, 0, 1);
+  const mapper = options.mapper ?? createRasterPointMapper(placement, width, height);
+  const radius = Math.max(0.5, options.size * height / 2);
+  const hardness = clamp(options.hardness, 0, 1);
+  const sample = new Float64Array(4);
+  // Carry edits forward when sampling all layers, rather than repeatedly
+  // picking up an unchanging snapshot from the beginning of the stroke.
+  const compositePatch = options.sampleAllPixels
+    ? new Uint8ClampedArray(documentBounds.width * documentBounds.height * 4) : null;
+  const compositeEdited = compositePatch ? new Set<number>() : null;
+  if (compositePatch && options.sampleAllPixels) {
+    for (let row = 0; row < documentBounds.height; row++) {
+      const start = ((documentBounds.y + row) * width + documentBounds.x) * 4;
+      compositePatch.set(options.sampleAllPixels.subarray(start, start + documentBounds.width * 4), row * documentBounds.width * 4);
+    }
+  }
 
   for (let y = 0; y < destinationBounds.height; y++) for (let x = 0; x < destinationBounds.width; x++) {
     const localPoint = { x: (destinationBounds.x + x + 0.5) / width, y: (destinationBounds.y + y + 0.5) / height };
-    const documentPoint = mapRasterPointToDocumentPoint(localPoint, placement, width, height);
+    const documentPoint = mapper.toDocument(localPoint);
     if (!documentPoint) continue;
-    const amount = maskAmount(documentPoint, width, height, mask, options.selectionPixels) * strength;
+    const documentX = documentPoint.x * width, documentY = documentPoint.y * height;
+    if (documentX < 0 || documentX >= width || documentY < 0 || documentY >= height) continue;
+    const distance = Math.hypot(documentX - to.x * width, documentY - to.y * height) / radius;
+    if (distance >= 1) continue;
+    const falloff = distance <= hardness ? 1 : (1 - distance) / Math.max(0.001, 1 - hardness);
+    const selection = options.selectionPixels ? options.selectionPixels[(Math.floor(documentY) * width + Math.floor(documentX)) * 4 + 3] / 255 : 1;
+    const amount = falloff * selection * strength;
     if (amount <= 0) continue;
     const sourceDocumentPoint = { x: documentPoint.x - delta.x, y: documentPoint.y - delta.y };
-    let sourcePixels: Uint8ClampedArray;
-    let sourceIndex: number;
     if (options.sampleAllPixels) {
-      const sx = Math.floor(sourceDocumentPoint.x * width);
-      const sy = Math.floor(sourceDocumentPoint.y * height);
+      const sx = sourceDocumentPoint.x * width - 0.5;
+      const sy = sourceDocumentPoint.y * height - 0.5;
       if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
-      sourcePixels = options.sampleAllPixels;
-      sourceIndex = (sy * width + sx) * 4;
+      samplePremultipliedBilinear(options.sampleAllPixels, width, height, sx, sy, sample);
     } else {
-      const sourceLocal = mapDocumentPointToRasterPoint(sourceDocumentPoint, placement, width, height);
+      const sourceLocal = mapper.toRaster(sourceDocumentPoint);
       if (!sourceLocal) continue;
-      const sx = Math.floor(sourceLocal.x * width) - readBounds.x;
-      const sy = Math.floor(sourceLocal.y * height) - readBounds.y;
+      const sx = sourceLocal.x * width - 0.5 - readBounds.x;
+      const sy = sourceLocal.y * height - 0.5 - readBounds.y;
       if (sx < 0 || sx >= readBounds.width || sy < 0 || sy >= readBounds.height) continue;
-      sourcePixels = snapshot.data;
-      sourceIndex = (sy * readBounds.width + sx) * 4;
+      samplePremultipliedBilinear(snapshot.data, readBounds.width, readBounds.height, sx, sy, sample);
     }
-    blendPixel(output.data, (y * destinationBounds.width + x) * 4, sourcePixels, sourceIndex, amount);
+    mixPremultipliedPixel(output.data, (y * destinationBounds.width + x) * 4, sample, amount);
+    if (compositePatch && compositeEdited) {
+      const px = Math.floor(documentX) - documentBounds.x, py = Math.floor(documentY) - documentBounds.y;
+      const index = (py * documentBounds.width + px) * 4;
+      if (px >= 0 && px < documentBounds.width && py >= 0 && py < documentBounds.height && !compositeEdited.has(index)) {
+        mixPremultipliedPixel(compositePatch, index, sample, amount);
+        compositeEdited.add(index);
+      }
+    }
   }
   context.putImageData(output, destinationBounds.x, destinationBounds.y);
+  if (compositePatch && options.sampleAllPixels) {
+    for (let row = 0; row < documentBounds.height; row++) {
+      options.sampleAllPixels.set(compositePatch.subarray(row * documentBounds.width * 4, (row + 1) * documentBounds.width * 4), ((documentBounds.y + row) * width + documentBounds.x) * 4);
+    }
+  }
   return destinationBounds;
 }
 
@@ -302,6 +334,31 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
   preview.height = Math.max(1, Math.round(document.height * previewScale));
   const previewContext = preview.getContext('2d');
   if (!previewContext) throw new Error('Canvas недоступен.');
+  const smudgeSettings = options.tool === 'smudge' ? options.settings : null;
+  const diameter = Math.max(1, (smudgeSettings?.size ?? 0) * document.height);
+  const spacing = Math.max(0.5, diameter * 0.08);
+  const smudgeSampler = createSmudgeDabSampler(spacing);
+  const mapper = createRasterPointMapper(placement, document.width, document.height);
+  const applySmudgeDab = (dab: SmudgeDab) => {
+    if (!smudgeSettings || smudgeSettings.strength <= 0) return;
+    const radius = diameter / 2 + 1;
+    const x = Math.max(0, Math.floor(dab.to.x - radius));
+    const y = Math.max(0, Math.floor(dab.to.y - radius));
+    const right = Math.min(document.width, Math.ceil(dab.to.x + radius));
+    const bottom = Math.min(document.height, Math.ceil(dab.to.y + radius));
+    if (right <= x || bottom <= y) return;
+    const next = { x, y, width: right - x, height: bottom - y };
+    const changed = renderSmudgeOnLayer({
+      working, placement, documentBounds: next, selectionPixels, sampleAllPixels, mapper,
+      from: { x: dab.from.x / document.width, y: dab.from.y / document.height },
+      to: { x: dab.to.x / document.width, y: dab.to.y / document.height },
+      size: smudgeSettings.size, hardness: smudgeSettings.hardness,
+      strength: 1 - Math.pow(1 - clamp(smudgeSettings.strength, 0, 1), dab.distance / spacing),
+    });
+    if (!changed) return;
+    dirtyBounds = mergeBounds(dirtyBounds, next);
+    pendingPreviewBounds = mergeBounds(pendingPreviewBounds, next);
+  };
   return {
     append(points) {
       if (cancelled || committing || committedId) return;
@@ -310,24 +367,20 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
         if (Number.isFinite(points[index]) && Number.isFinite(points[index + 1])) normalized.push(clamp(points[index], 0, 1), clamp(points[index + 1], 0, 1));
       }
       if (normalized.length < 2) return;
-      const segment = lastPoint ? [lastPoint[0], lastPoint[1], ...normalized] : normalized;
-      if (options.tool === 'smudge' && segment.length < 4) {
-        lastPoint = [normalized[normalized.length - 2], normalized[normalized.length - 1]];
+      if (options.tool === 'smudge') {
+        const pixelPoints = normalized.map((value, index) => value * (index % 2 === 0 ? document.width : document.height));
+        for (const dab of smudgeSampler.append(pixelPoints)) applySmudgeDab(dab);
         return;
       }
+      const segment = lastPoint ? [lastPoint[0], lastPoint[1], ...normalized] : normalized;
       segmentContext.clearRect(0, 0, document.width, document.height);
-      const size = options.tool === 'smudge' ? options.settings.size : options.settings.brushSize;
+      const size = options.settings.brushSize;
       const hardness = options.settings.hardness;
       const stroke: StrokeData = { id: 'local-retouch-mask', points: segment, size, hardness, opacity: 1, color: '#ffffff', mode: 'paint' };
       const next = drawBrushStroke(segmentContext, stroke, document.width, document.height, { color: '#ffffff' });
       if (!next) return;
-      const from = { x: segment[0], y: segment[1] };
       const to = { x: segment[segment.length - 2], y: segment[segment.length - 1] };
-      if (options.tool === 'smudge') {
-        renderSmudgeOnLayer({ working, placement, documentBounds: next, segmentMask, selectionPixels, sampleAllPixels, from, to, strength: options.settings.strength });
-      } else {
-        renderSharpenOnLayer({ working, placement, documentBounds: next, segmentMask, selectionPixels, amount: options.settings.sharpenAmount, radius: options.settings.sharpenRadius });
-      }
+      renderSharpenOnLayer({ working, placement, documentBounds: next, segmentMask, selectionPixels, amount: options.settings.sharpenAmount, radius: options.settings.sharpenRadius });
       dirtyBounds = mergeBounds(dirtyBounds, next);
       pendingPreviewBounds = mergeBounds(pendingPreviewBounds, next);
       lastPoint = [to.x, to.y];
@@ -343,6 +396,7 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
     async commit() {
       if (cancelled) throw new Error('Операция отменена.');
       if (committing || committedId) throw new Error('Операция уже завершается.');
+      for (const dab of smudgeSampler.finish()) applySmudgeDab(dab);
       if (!dirtyBounds) throw new Error(options.tool === 'smudge' ? 'Проведите кистью, чтобы смазать пиксели.' : 'Пустой штрих.');
       committing = true;
       const commitState = useStore.getState();
@@ -351,10 +405,15 @@ async function createLocalRetouchSession(options: LocalRetouchOptions): Promise<
       resolveTarget(commitDocument, target);
       if (targetRevision(commitDocument, target) !== revision) throw new Error('Содержимое или геометрия слоя изменились.');
       const src = await canvasToPersistentDataUrl(working);
+      const finalState = useStore.getState();
+      const finalDocument = finalState.documents[finalState.activeDocIndex];
+      if (!finalDocument || finalDocument.id !== document.id) throw new Error('Активная страница изменилась.');
+      resolveTarget(finalDocument, target);
+      if (targetRevision(finalDocument, target) !== revision || !selectedMatches(finalDocument, target)) throw new Error('Слой изменился до завершения ретуши.');
       registerRuntimeRasterSource(src, working);
-      if (target.type === 'base') commitState.commitBaseRasterEffect(src);
+      if (target.type === 'base') finalState.commitBaseRasterEffect(src);
       else {
-        commitState.pushHistory();
+        finalState.pushHistory();
         useStore.getState().updateAiLayer(target.id, { src, adjustments: { brightness: 1, contrast: 1, saturation: 1 }, eraseElements: [] }, { history: false });
       }
       committedId = target.id;

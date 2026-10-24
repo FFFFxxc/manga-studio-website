@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useEditorUiStore } from '@/store/useEditorUiStore';
 import { useStore } from '@/store/useStore';
-import { uid } from '@/utils/imageUtils';
-import type { ShapeKind, ShapeSettings, WatermarkObject } from '@/types';
-import { PanelRow, PanelSlider, PanelLabel, PanelSection, PanelButton } from './PanelComponents';
+import type { ShapeKind, ShapeSettings } from '@/types';
+import { PanelRow, PanelSlider, PanelLabel, PanelSection } from './PanelComponents';
 import { PaintEditor } from './PaintEditor';
 import {
   POINTER_PRESETS,
@@ -38,11 +37,10 @@ const SHAPES: { kind: ShapeKind; label: string; icon: React.ReactNode }[] = [
 export function InsertPanel() {
   const {
     activeDocIndex, documents,
-    addWatermark, addShape, updateShape,
+    addShape, updateShape,
     shapeSettings, updateShapeSettings,
-    selectedObject, setSelectedObject, pushHistory,
+    selectedObject, pushHistory,
   } = useStore();
-  const overlayInputRef = useRef<HTMLInputElement>(null);
   const pointEditingId = useEditorUiStore(state => state.shapePointEditingId);
   const setPointEditingId = useEditorUiStore(state => state.setShapePointEditingId);
 
@@ -71,38 +69,6 @@ export function InsertPanel() {
     else updateShapeSettings(updates);
   }
 
-  function handleOverlayFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !activeDoc) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      const dataURL = ev.target?.result as string;
-      const img = new window.Image();
-      img.onload = () => {
-        const wm: WatermarkObject = {
-          id: uid(),
-          type: 'image',
-          imageSrc: dataURL,
-          imageWidth: 0.45,
-          imageHeight: (0.45 * activeDoc.width * (img.naturalHeight / img.naturalWidth)) / activeDoc.height,
-          x: 0.28,
-          y: 0.28,
-          scaleX: 1,
-          scaleY: 1,
-          rotation: 0,
-          opacity: 1,
-          visible: true,
-          isBatch: false,
-        };
-        addWatermark(wm);
-        setSelectedObject({ id: wm.id, type: 'watermark' });
-      };
-      img.src = dataURL;
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
-  }
-
   function handleAddShape(kind: ShapeKind) {
     if (!activeDoc) return;
     addShape(createShapeFromSettings(kind, shapeSettings));
@@ -110,22 +76,6 @@ export function InsertPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Overlay image */}
-      <PanelSection>
-        <PanelButton fullWidth onClick={() => overlayInputRef.current?.click()} disabled={!hasDoc}>
-          + Вставить картинку
-        </PanelButton>
-        <input
-          ref={overlayInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          style={{ display: 'none' }}
-          onChange={handleOverlayFile}
-        />
-      </PanelSection>
-
-      <div className="divider" />
-
       {/* Shapes */}
       <PanelSection>
         <div className="shape-picker" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
