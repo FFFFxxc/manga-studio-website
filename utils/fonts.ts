@@ -53,14 +53,19 @@ function openDB(): Promise<IDBDatabase> {
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error('Хранилище шрифтов занято другой вкладкой. Закройте её и повторите загрузку.'));
   });
 }
 
 /** Register a font with the browser so both DOM and canvas can use it */
 async function registerFont(name: string, data: ArrayBuffer): Promise<void> {
-  unregisterFont(name);
   const face = new FontFace(name, data);
   const loaded = await face.load();
+  activateFont(name, loaded);
+}
+
+function activateFont(name: string, loaded: FontFace): void {
+  unregisterFont(name);
   (document.fonts as unknown as { add: (f: FontFace) => void }).add(loaded);
   registeredFaces.set(name, loaded);
 }
@@ -101,15 +106,19 @@ export async function hasCustomFont(name: string): Promise<boolean> {
  * responsible for asking the user to confirm the overwrite).
  */
 export async function saveCustomFont(name: string, data: ArrayBuffer): Promise<void> {
-  await registerFont(name, data);
+  // Validate the new face before replacing either the persisted file or the
+  // current face. A failed upload must leave the existing font usable.
+  const loaded = await new FontFace(name, data).load();
   const db = await openDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put({ name, data } satisfies StoredFont);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put({ name, data } satisfies StoredFont);
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error('Не удалось сохранить шрифт в браузере.'));
+    });
+  } finally { db.close(); }
+  activateFont(name, loaded);
 }
 
 /** Load all previously saved custom fonts; returns their names */
@@ -141,19 +150,24 @@ export async function loadSavedCustomFonts(): Promise<string[]> {
 
 /** Delete a saved custom font (from IndexedDB AND the current session). */
 export async function deleteCustomFont(name: string): Promise<void> {
-  unregisterFont(name);
+  const db = await openDB();
   try {
-    const db = await openDB();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).delete(name);
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error('Не удалось удалить шрифт из браузера.'));
     });
-    db.close();
-  } catch {
-    // ignore
-  }
+  } finally { db.close(); }
+  unregisterFont(name);
+}
+
+export function validateCustomFontFile(file: File): string | null {
+  if (!/\.(ttf|otf|woff2?)$/i.test(file.name)) return 'Принимаются TTF, OTF, WOFF и WOFF2.';
+  if (!file.size) return 'Файл шрифта пустой.';
+  if (file.size > 20 * 1024 * 1024) return 'Размер шрифта превышает 20 МБ.';
+  if (!file.name.replace(/\.[^.]+$/, '').trim()) return 'Не удалось определить имя шрифта.';
+  return null;
 }
 
 /* ---------- Default translation font (localStorage) ---------- */

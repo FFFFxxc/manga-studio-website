@@ -1,12 +1,14 @@
 import type { StrokeData } from '@/types';
 import { getBrushSpacingPx, getBrushTipRadii } from '@/utils/brushTip';
+import { BRUSH_PRESETS, createPresetTip } from '@/utils/brushPresets';
+import type { BrushPreset } from '@/types';
 
 const stampCache = new Map<string, HTMLCanvasElement>();
 
-function getBrushStamp(diameter: number, hardness: number, color: string) {
+function getBrushStamp(diameter: number, hardness: number, color: string, preset: BrushPreset = 'round') {
   const size = Math.max(1, Math.ceil(diameter));
   const normalizedHardness = Math.max(0, Math.min(1, hardness));
-  const key = `${size}:${normalizedHardness.toFixed(3)}:${color}`;
+  const key = `${size}:${normalizedHardness.toFixed(3)}:${color}:${preset}`;
   const cached = stampCache.get(key);
   if (cached) return cached;
   const canvas = document.createElement('canvas');
@@ -15,7 +17,9 @@ function getBrushStamp(diameter: number, hardness: number, color: string) {
   const ctx = canvas.getContext('2d')!;
   const center = canvas.width / 2;
   const { outer, hard } = getBrushTipRadii(diameter, normalizedHardness);
-  if (normalizedHardness >= 1) {
+  if (preset !== 'round') {
+    ctx.drawImage(createPresetTip(preset, diameter, normalizedHardness), 2, 2, diameter, diameter);
+  } else if (normalizedHardness >= 1) {
     ctx.fillStyle = 'rgba(255,255,255,1)';
     ctx.beginPath();
     ctx.arc(center, center, outer, 0, Math.PI * 2);
@@ -54,8 +58,10 @@ export function drawBrushStroke(
   const diameter = Math.max(1, stroke.size * height);
   const hardness = stroke.hardness ?? 1;
   const color = options.color ?? stroke.color;
-  const stamp = getBrushStamp(diameter, hardness, color);
-  const spacing = getBrushSpacingPx(diameter, hardness);
+  const preset = stroke.purpose === 'mask' || stroke.mode === 'erase' ? 'round' : stroke.brushPreset ?? 'round';
+  const stamp = getBrushStamp(diameter, hardness, color, preset);
+  const spacing = preset === 'round' ? getBrushSpacingPx(diameter, hardness)
+    : Math.max(0.5, diameter * (BRUSH_PRESETS.find(item => item.id === preset)?.spacing ?? 0.08));
   const points: Array<{ x: number; y: number }> = [];
   for (let index = 0; index < stroke.points.length; index += 2) {
     points.push({ x: stroke.points[index] * width, y: stroke.points[index + 1] * height });

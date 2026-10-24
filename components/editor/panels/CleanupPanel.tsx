@@ -8,6 +8,7 @@ import { DEFAULT_REDRAW_PROMPT, redrawSfx, translateBubble, translateRegionWithA
 import { getImageUsage } from '@/lib/routerai/client';
 import type { TextObject } from '@/types';
 import { DEFAULT_ANIME_FONT } from '@/types';
+import { BrushLibrary } from '../BrushLibrary';
 
 const primaryButtonStyle = {
   padding: '7px', borderRadius: 6, fontSize: 12, fontWeight: 600,
@@ -180,6 +181,7 @@ export function CleanupPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {activeTool === 'brush' && <BrushLibrary />}
       {/* Mode tabs */}
       <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
         {([

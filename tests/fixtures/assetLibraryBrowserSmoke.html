@@ -1,0 +1,8 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><title>Библиотеки кистей, стикеров и шрифтов</title>
+<style>body{margin:30px;background:#20242b;color:#ddd;font:15px system-ui}button{padding:10px;cursor:pointer}#previews{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}figure{margin:0;background:#34465d;border-radius:8px;padding:12px}img{width:100%;max-width:400px}figcaption{margin-bottom:5px}pre{white-space:pre-wrap}</style>
+<h1>Кисти, стикеры и шрифты</h1><pre id="result">Проверка…</pre><button onclick="location.reload()">Перезагрузить</button><div id="previews"></div>
+<script type="module">
+import {runAssetLibraryBrowserSmoke} from './assetLibraryBrowserSmoke.ts';
+try{const result=await runAssetLibraryBrowserSmoke();document.querySelector('#result').textContent=result.status+'\n'+result.details;for(const item of result.previews){const figure=document.createElement('figure');const caption=document.createElement('figcaption');caption.textContent=item.name;const image=document.createElement('img');image.src=item.src;image.alt=item.name;figure.append(caption,image);document.querySelector('#previews').append(figure);}}
+catch(error){document.querySelector('#result').textContent='FAIL\n'+error.stack;}
+</script></html>

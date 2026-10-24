@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '@/store/useStore';
 import { uid } from '@/utils/imageUtils';
-import { saveCustomFont, hasCustomFont, deleteCustomFont } from '@/utils/fonts';
+import { saveCustomFont, hasCustomFont, deleteCustomFont, validateCustomFontFile } from '@/utils/fonts';
 import { translateText, type TranslateLang } from '@/utils/translate';
 import type { PaintStyle, TextObject, TranslationMaskObject } from '@/types';
 import { DEFAULT_ANIME_FONT, MANGA_FONTS, TEXT_PRESETS } from '@/types';
@@ -75,6 +75,10 @@ export function TextPanel() {
     pushHistory: state.pushHistory,
   })));
   const customFontRef = useRef<HTMLInputElement>(null);
+  const fontImporting = useRef(false);
+  const [loadingFonts, setLoadingFonts] = useState(false);
+  const [fontStatus, setFontStatus] = useState('');
+  const [fontErrors, setFontErrors] = useState<string[]>([]);
   const [isTranslating, setIsTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
   const [langFrom, setLangFrom] = useState<TranslateLang>('en');
@@ -114,37 +118,50 @@ export function TextPanel() {
   }
 
   async function handleCustomFont(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = '';
-    if (!file) return;
-    const fontName = file.name.replace(/\.[^.]+$/, '').trim();
-    if (!fontName) {
-      alert('Не удалось определить имя шрифта из файла.');
-      return;
-    }
-    // Дубликаты имён: перезаписываем только после подтверждения.
-    const isDuplicate = customFonts.includes(fontName) || await hasCustomFont(fontName);
-    if (isDuplicate) {
-      if (!window.confirm(`Шрифт «${fontName}» уже загружен. Заменить его новым файлом?`)) return;
-    } else if (MANGA_FONTS.includes(fontName)) {
-      if (!window.confirm(`Имя «${fontName}» совпадает со встроенным шрифтом — загруженный файл заменит его при отображении. Продолжить?`)) return;
-    }
+    if (!files.length || fontImporting.current) return;
+    fontImporting.current = true;
+    setLoadingFonts(true);
+    setFontErrors([]);
+    setFontStatus('Проверяем и сохраняем шрифты…');
+    const errors: string[] = [];
+    let added = 0;
     try {
-      const buffer = await file.arrayBuffer();
-      // Registers the font AND saves it to IndexedDB so it survives reloads
-      await saveCustomFont(fontName, buffer);
-      addCustomFont(fontName);
-      bumpFontsVersion();
-      updateTextSettings({ fontFamily: fontName });
-    } catch {
-      alert('Не удалось загрузить шрифт. Проверьте файл (.ttf/.otf/.woff/.woff2).');
+      for (const file of files) {
+        try {
+          const validation = validateCustomFontFile(file);
+          if (validation) throw new Error(validation);
+          const fontName = file.name.replace(/\.[^.]+$/, '').trim();
+          if (MANGA_FONTS.includes(fontName) || useStore.getState().customFonts.includes(fontName) || await hasCustomFont(fontName)) {
+            throw new Error('Шрифт с таким именем уже есть. Переименуйте файл, чтобы добавить другую версию.');
+          }
+          await saveCustomFont(fontName, await file.arrayBuffer());
+          addCustomFont(fontName);
+          bumpFontsVersion();
+          if (!useStore.getState().selectedObject) updateTextSettings({ fontFamily: fontName });
+          added++;
+        } catch (error) {
+          errors.push(`${file.name}: ${error instanceof Error ? error.message : 'Не удалось прочитать шрифт. Проверьте файл и доступ к хранилищу браузера.'}`);
+        }
+      }
+    } finally {
+      setFontErrors(errors);
+      setFontStatus(added ? `Сохранено шрифтов: ${added}. Доступны после перезагрузки.` : 'Новые шрифты не добавлены.');
+      setLoadingFonts(false);
+      fontImporting.current = false;
     }
   }
 
   async function handleDeleteCustomFont(name: string) {
     if (!window.confirm(`Удалить шрифт «${name}»? Он исчезнет из списка и из сохранённых шрифтов.`)) return;
     // Удаляем из IndexedDB и дерегистрируем из текущей сессии
-    await deleteCustomFont(name);
+    try {
+      await deleteCustomFont(name);
+    } catch {
+      setFontErrors([`Не удалось удалить «${name}» из хранилища браузера. Повторите попытку.`]);
+      return;
+    }
     removeCustomFont(name);
 
     const state = useStore.getState();
@@ -653,7 +670,10 @@ export function TextPanel() {
       </div>
 
       <details className="editor-disclosure"><summary>Мои шрифты</summary>
+      <p style={{ fontSize: 11, lineHeight: 1.5, color: 'var(--text-muted)', margin: '8px 0' }}>Загрузите TTF, OTF, WOFF или WOFF2. Шрифты сохраняются в этом браузере и доступны после перезагрузки. Можно выбрать несколько файлов, до 20 МБ каждый.</p>
       <button
+        type="button"
+        disabled={loadingFonts}
         onClick={() => customFontRef.current?.click()}
         style={{
           padding: '5px 8px', fontSize: 11, borderRadius: 6,
@@ -662,9 +682,11 @@ export function TextPanel() {
           color: 'var(--text-muted)', cursor: 'pointer',
         }}
       >
-        Загрузить шрифт (.ttf/.otf/.woff/.woff2)
+        {loadingFonts ? 'Сохраняем шрифты…' : 'Добавить свои шрифты'}
       </button>
-      <input ref={customFontRef} type="file" accept=".ttf,.otf,.woff,.woff2" onChange={handleCustomFont} style={{ display: 'none' }} />
+      <input ref={customFontRef} aria-label="Добавить файлы шрифтов" type="file" accept=".ttf,.otf,.woff,.woff2" multiple onChange={handleCustomFont} style={{ display: 'none' }} />
+      {fontStatus && <p role="status" style={{ fontSize: 11, lineHeight: 1.5 }}>{fontStatus}</p>}
+      {fontErrors.length > 0 && <ul role="alert" style={{ paddingLeft: 16, fontSize: 11, lineHeight: 1.5, color: 'var(--danger)' }}>{fontErrors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}</ul>}
 
       {/* Мои шрифты: сохранены в браузере (IndexedDB), переживают перезагрузку */}
       {customFonts.length > 0 && (

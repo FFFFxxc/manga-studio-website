@@ -2,7 +2,7 @@
 
 import { useStore } from '@/store/useStore';
 import { useEffect } from 'react';
-import { Brush, Type, MessageCircle, Shapes, Stamp, Crop } from 'lucide-react';
+import { Brush, Type, MessageCircle, Shapes, Stamp, Crop, Sticker } from 'lucide-react';
 import { useEditorUiStore } from '@/store/useEditorUiStore';
 import type { LeftTab } from '@/types';
 import { WatermarkPanel } from './panels/WatermarkPanel';
@@ -11,12 +11,14 @@ import { TextPanel } from './panels/TextPanel';
 import { InsertPanel } from './panels/InsertPanel';
 import { TransformPanel } from './panels/TransformPanel';
 import { BubblePanel } from './panels/BubblePanel';
+import { StickerPanel } from './panels/StickerPanel';
 
 const TABS: Array<{ key: LeftTab; label: string; hotkey: string; icon: typeof Brush; hint: string }> = [
   { key: 'cleanup', label: 'Очистка', hotkey: '2', icon: Brush, hint: 'Уберите исходный текст и исправьте фон.' },
   { key: 'text', label: 'Текст', hotkey: '3', icon: Type, hint: 'Добавьте перевод или измените выбранную надпись.' },
   { key: 'bubble', label: 'Баблы', hotkey: '6', icon: MessageCircle, hint: 'Добавьте реплику и настройте её форму.' },
   { key: 'insert', label: 'Фигуры', hotkey: '4', icon: Shapes, hint: 'Добавьте фигуру или стрелку. Изображения вставляются кнопкой в верхней панели.' },
+  { key: 'stickers', label: 'Стикеры', hotkey: '7', icon: Sticker, hint: 'Готовый пак и ваши PNG, сохранённые в браузере.' },
   { key: 'watermark', label: 'Водяной знак', hotkey: '1', icon: Stamp, hint: 'Поставьте подпись или логотип на страницы.' },
   { key: 'transform', label: 'Размер и обрезка', hotkey: '5', icon: Crop, hint: 'Измените размер или обрежьте страницу.' },
 ];
@@ -75,7 +77,7 @@ export function LeftPanel() {
 
       {/* Panel content */}
       <div id={`panel-${leftTab}`} role="tabpanel" aria-labelledby={`tab-${leftTab}`} className="editor-scroll editor-properties" style={{ flex: 1, overflowY: 'auto', padding: '20px 16px' }}>
-        {!hasDocuments ? (
+        {!hasDocuments && leftTab !== 'stickers' ? (
           <div className="editor-empty">
             <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true"><rect x="5" y="7" width="26" height="22" rx="4" stroke="currentColor" strokeWidth="1.5"/><path d="M10 23l5-5 4 4 3-3 5 5M23 13h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             <strong>Здесь будут настройки</strong>
@@ -90,6 +92,7 @@ export function LeftPanel() {
             {leftTab === 'bubble' && <BubblePanel />}
             {leftTab === 'insert' && <InsertPanel />}
             {leftTab === 'transform' && <TransformPanel />}
+            {leftTab === 'stickers' && <StickerPanel />}
           </>
         )}
       </div>

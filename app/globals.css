@@ -399,6 +399,26 @@ select, input[type="text"], input[type="number"], textarea { min-height: 36px; }
   white-space: nowrap;
 }
 .tool-options strong { color: var(--text-primary); font-size: 12px; }
+.brush-library summary { cursor: pointer; font-size: 12px; font-weight: 600; padding: 6px 0; }
+.brush-preset-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; margin-top: 6px; }
+.brush-preset-grid button { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 6px; border: 1px solid var(--border-default); border-radius: 7px; background: #343942; color: var(--text-primary); cursor: pointer; font-size: 11px; }
+.brush-preset-grid button[aria-pressed=true] { border-color: var(--accent); background: var(--accent-muted); }
+.brush-preset-grid canvas { width: 100%; height: 44px; object-fit: contain; }
+.library-hint { margin: 5px 0; font-size: 11px; color: var(--text-muted); line-height: 1.55; }
+.sticker-library { display: flex; flex-direction: column; gap: 10px; }
+.library-tabs { display: flex; gap: 4px; }
+.library-tabs button,.library-pagination button { border: 1px solid var(--border-default); border-radius: 5px; padding: 6px 9px; background: var(--bg-panel-raised); color: var(--text-secondary); cursor: pointer; }
+.library-tabs button[aria-selected=true] { color: var(--accent); border-color: var(--accent); }
+.library-search { width: 100%; min-height: 32px; padding: 6px 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-input); color: var(--text-primary); font-size: 12px; }
+.library-error { font-size: 11px; line-height: 1.5; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sticker-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.sticker-tile { position: relative; min-width: 0; }
+.sticker-tile > button:first-child { width: 100%; padding: 5px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-panel-raised); color: var(--text-secondary); cursor: pointer; }
+.sticker-tile > button:first-child:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-hover); }
+.sticker-tile img { width: 100%; aspect-ratio: 1; object-fit: contain; }
+.sticker-tile span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.sticker-delete { position: absolute; right: 2px; top: 2px; border: 1px solid var(--border-default); border-radius: 50%; width: 22px; height: 22px; color: var(--text-primary); background: var(--bg-panel); cursor: pointer; }
+.library-pagination { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
 .tool-options label, .tool-options button { display: inline-flex; align-items: center; gap: 6px; }
 .tool-options button { min-height: 30px; padding: 0 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-panel-raised); color: var(--text-secondary); cursor: pointer; }
 .tool-options button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
