@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><title>Круглый ластик — проверка</title>
+<style>body{background:#191c21;color:#eee;font:16px system-ui;padding:32px}img{width:720px;background:repeating-conic-gradient(#bbb 0% 25%,#fff 0% 50%) 0/24px 24px}pre{white-space:pre-wrap}</style>
+<h1>Круглый ластик</h1><pre id="result">Проверка…</pre><div id="preview"></div>
+<script type="module">
+import {runEraserBrowserSmoke} from './eraserBrowserSmoke.ts';
+try { const {results,preview}=await runEraserBrowserSmoke(); document.querySelector('#result').textContent='PASS\n'+results.join('\n'); const image=document.createElement('img');image.src=preview;image.alt='Круглый штрих ластика с мягким краем';document.querySelector('#preview').append(image); }
+catch(e){document.querySelector('#result').textContent='FAIL\n'+e.stack;}
+</script></html>
